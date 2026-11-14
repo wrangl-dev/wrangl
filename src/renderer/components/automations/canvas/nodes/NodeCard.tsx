@@ -1,0 +1,258 @@
+import type { AutomationNode, NodeSpec, Port, Trigger } from '@shared/types/automation.types'
+import { AlertCircle, Clock, Zap } from '@/components/icons'
+import { cn } from '@/lib/utils'
+import {
+  type FiredBy,
+  firedPresentation,
+  formatDuration,
+  NODE_KIND_PRESENTATION,
+  nodeKeyDetail,
+  triggerSummary
+} from '../../automation-format'
+import {
+  CARD,
+  HANDLE_SIZE,
+  hasSlots,
+  OUTPUT_PORTS,
+  outputPortY,
+  PORT_PRESENTATION,
+  TRIGGER
+} from '../ports'
+import type { CardRun } from '../run/run-overlay'
+import { STEP_VIEW, StepGlyph } from '../run/step-view'
+
+/**
+ * `issues` counts the validation issues on this card; `open` lists outputs
+ * with no edge yet; `run` is the step's status when the canvas shows a run.
+ */
+export type CardData =
+  | {
+      kind: typeof TRIGGER
+      trigger: Trigger
+      issues: number
+      open: Port[]
+      run?: CardRun
+      /** On a run: what started it, shown in place of the trigger's settings. */
+      fired?: FiredBy
+    }
+  | {
+      kind: 'step'
+      node: AutomationNode
+      issues: number
+      open: Port[]
+      /** An issue that names the broken setting, shown in place of the detail. */
+      problem?: string
+      run?: CardRun
+    }
+
+type Slot = { label: string; value: string }
+
+/**
+ * The short detail a 192 px card has room for. What a slot already shows
+ * (model, tools, MCP tool) is left out; the step list keeps the full detail.
+ */
+function cardDetail(spec: NodeSpec): string {
+  switch (spec.kind) {
+    case 'http':
+      return nodeKeyDetail(spec)
+    case 'agent':
+      return spec.agent_id
+    case 'transform':
+      return spec.fields.length === 1 ? '1 field' : `${spec.fields.length} fields`
+    case 'condition':
+      return [spec.op, spec.right].filter(Boolean).join(' ')
+    case 'fail':
+      return spec.message
+    case 'for_each':
+      return `max ${spec.max_iterations}`
+    case 'merge':
+      return spec.mode === 'all' ? 'every branch' : 'any branch'
+    case 'wait':
+      return formatDuration(spec.duration_ms)
+    case 'approval':
+      return `times out after ${formatDuration(spec.timeout_ms)}`
+    case 'mcp_tool':
+      return spec.server_id
+  }
+}
+
+/** Config slots an agent or MCP tool card hangs below itself. */
+function slotsOf(spec: NodeSpec): Slot[] {
+  if (!hasSlots(spec)) return []
+  return spec.kind === 'agent'
+    ? [
+        { label: 'Model', value: spec.model || 'Default' },
+        { label: 'Tools', value: spec.tools.join(', ') || 'None' }
+      ]
+    : [
+        { label: 'Server', value: spec.server_id },
+        { label: 'Tool', value: spec.tool }
+      ]
+}
+
+function present(data: CardData): {
+  Icon: typeof Zap
+  title: string
+  subtitle: string
+  problem: boolean
+  ports: readonly Port[]
+  slots: Slot[]
+} {
+  if (data.kind === TRIGGER && data.fired) {
+    const fired = firedPresentation(data.fired)
+    return {
+      Icon: fired.Icon,
+      title: fired.title,
+      subtitle: fired.detail,
+      problem: false,
+      ports: OUTPUT_PORTS.trigger,
+      slots: []
+    }
+  }
+  if (data.kind === TRIGGER) {
+    const manual = data.trigger.kind === 'manual'
+    return {
+      Icon: manual ? Zap : Clock,
+      title: manual ? 'Manual' : 'Schedule',
+      subtitle: triggerSummary(data.trigger),
+      problem: false,
+      ports: OUTPUT_PORTS.trigger,
+      slots: []
+    }
+  }
+  const { spec, label } = data.node
+  const kind = NODE_KIND_PRESENTATION[spec.kind]
+  return {
+    Icon: kind.Icon,
+    title: label,
+    subtitle: data.problem ?? `${kind.label} · ${cardDetail(spec)}`,
+    problem: data.problem !== undefined,
+    ports: OUTPUT_PORTS[spec.kind],
+    slots: slotsOf(spec)
+  }
+}
+
+/**
+ * One step on the canvas: icon tile, title, kind and key detail, the names
+ * of ports labelled beside their handle, and config slots under agent and
+ * MCP tool cards. Handles come from the flow adapter as `children`. The
+ * canvas reads the same steps out as a list, so the card is hidden from
+ * screen readers.
+ */
+export function NodeCard({
+  data,
+  selected,
+  dimmed = false,
+  children
+}: {
+  data: CardData
+  selected: boolean
+  /** While connecting: this card cannot take the edge. */
+  dimmed?: boolean
+  children?: React.ReactNode
+}): React.JSX.Element {
+  const { Icon, title, subtitle, problem, ports, slots } = present(data)
+  const status = data.run?.status
+  const loop = data.run?.loop
+  const live = status === 'running'
+  return (
+    <div
+      className={cn(
+        'relative transition-opacity',
+        (dimmed || status === 'skipped' || status === 'cancelled') && 'opacity-50'
+      )}
+      style={{ width: CARD.width, height: CARD.height }}
+    >
+      {loop && (
+        <span
+          aria-hidden="true"
+          data-testid="card-iterations"
+          className="absolute -top-2.5 right-3 z-10 rounded-full border border-border bg-card px-2 text-xs leading-5 font-medium tabular-nums text-foreground"
+        >
+          {loop.iterations} {loop.iterations === 1 ? 'iteration' : 'iterations'}
+          {loop.failed > 0 && <span className="text-destructive"> · {loop.failed} failed</span>}
+        </span>
+      )}
+      <div
+        aria-hidden="true"
+        className={cn(
+          'flex size-full items-center gap-2 rounded-xl border pr-1.5 pl-2.5 shadow-xs',
+          selected ? 'keycap border-foreground/40' : 'border-border bg-card',
+          live && 'border-primary/55 ring-3 ring-primary/15'
+        )}
+      >
+        <span
+          className={cn(
+            'grid size-8 shrink-0 place-items-center rounded-lg',
+            selected ? 'bg-foreground/10 text-foreground' : 'bg-muted text-secondary-foreground'
+          )}
+        >
+          <Icon size={16} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate text-sm font-medium text-foreground">{title}</span>
+            {data.issues > 0 && (
+              <span
+                data-testid="card-issues"
+                className="ml-auto flex shrink-0 items-center gap-0.5 text-xs font-medium tabular-nums text-destructive"
+              >
+                <AlertCircle size={12} />
+                {data.issues}
+              </span>
+            )}
+            {status && status !== 'pending' && (
+              <span
+                data-testid="card-status"
+                title={STEP_VIEW[status].label}
+                className="ml-auto flex shrink-0"
+              >
+                <StepGlyph status={status} />
+              </span>
+            )}
+          </span>
+          <span
+            className={cn(
+              'truncate text-xs',
+              problem ? 'text-destructive' : 'text-muted-foreground'
+            )}
+            title={subtitle}
+          >
+            {subtitle}
+          </span>
+        </span>
+      </div>
+      {ports.map((port, index) =>
+        PORT_PRESENTATION[port].label === 'handle' ? (
+          <span
+            key={port}
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none absolute -translate-y-1/2 rounded-sm bg-background px-0.5 text-xs leading-4',
+              PORT_PRESENTATION[port].tone
+            )}
+            style={{ left: CARD.width + HANDLE_SIZE, top: outputPortY(index, ports.length) }}
+          >
+            {port}
+          </span>
+        ) : null
+      )}
+      {slots.map((slot, index) => (
+        <span
+          key={slot.label}
+          aria-hidden="true"
+          className="pointer-events-none absolute top-full flex w-23 -translate-x-1/2 flex-col items-center"
+          style={{ left: index === 0 ? '24%' : '76%' }}
+        >
+          <span className="-mt-1 size-2 rotate-45 border-2 border-muted-foreground bg-card" />
+          <span className="h-2.5 w-px bg-field-border" />
+          <span className="max-w-full truncate rounded-full border border-border bg-card px-2 text-xs leading-[18px] font-semibold text-foreground">
+            {slot.value}
+          </span>
+          <span className="mt-0.5 text-xs leading-4 text-muted-foreground">{slot.label}</span>
+        </span>
+      ))}
+      {children}
+    </div>
+  )
+}

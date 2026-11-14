@@ -1,0 +1,4 @@
+{
+  "redirects": [{ "source": "/", "destination": "/docs/" }],
+  "rewrites": [{ "source": "/docs/**", "destination": "/docs/404.html" }]
+}

@@ -1,0 +1,534 @@
+//! Static serving for the ACP web server — dev `ServeDir` + production embed.
+//!
+//! - **Dev** (`dist-web/` on disk, built by `bun run build:web`):
+//!   `tower_http::services::ServeDir` from repo-root `dist-web/` (path resolved
+//!   from `CARGO_MANIFEST_DIR`, not process CWD) so Vite output changes are
+//!   served without a cargo rebuild.
+//! - **Release** (`dist-web/` NOT on disk, e.g. a shipped `wrangl-server` or
+//!   desktop binary on a user/VPS machine): serve from the embedded
+//!   [`Assets`] (rust-embed) so the binary is self-contained (no CDN, no disk
+//!   dependency). SPA `index.html` fallback for the hash-router client.
+//!
+//! Both paths share the SAME fallback: when `dist_web_ready()` is true the dev
+//! ServeDir is used; otherwise the embedded bundle is served. The `/health` +
+//! `/ws` routes are registered BEFORE this fallback so the static mount cannot
+//! shadow them (Story 1.3 AC1).
+
+use std::borrow::Cow;
+use std::convert::Infallible;
+use std::path::{Path, PathBuf};
+
+use axum::body::Body;
+use axum::extract::Request;
+use axum::http::{header, Extensions, HeaderMap, HeaderValue, Method, StatusCode, Uri, Version};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use tower_http::compression::predicate::{And, DefaultPredicate, Predicate};
+use tower_http::compression::CompressionLayer;
+use tower_http::services::{ServeDir, ServeFile};
+
+// Release builds with a missing/stale `dist-web/` fail clearly here (set by
+// `build.rs` via the `web_embed_missing` cfg). Dev builds stay green: rust-embed's
+// `#[allow_missing]` compiles an empty embed + `debug_assertions` skips this
+// gate. A release `cargo build --release` without `bun run build:web` first
+// hits this error rather than shipping a binary that 404s every static route.
+#[cfg(all(not(debug_assertions), web_embed_missing))]
+compile_error!(
+    "dist-web/ is missing or stale — run `bun run build:web` before building a \
+     release binary (rust-embed embeds the Vite bundle at cargo-build time)"
+);
+
+// Release builds without the corral canvas bundle fail here too (set by
+// `build.rs` via the `canvas_bundle_missing` cfg), so no release binary ships
+// a canvas that answers BUNDLE_MISSING. `build.rs` sets the cfg only for the
+// release profile, so dev builds stay green.
+#[cfg(canvas_bundle_missing)]
+compile_error!(
+    "canvas/bundle/ is missing: run `bun scripts/canvas/fetch-corral-bundle.mjs` before \
+     building a release binary (rust-embed embeds the corral canvas at cargo-build time), \
+     or set WRANGL_ALLOW_MISSING_CANVAS_BUNDLE=1 to build without the canvas"
+);
+
+/// The SPA entry served for any non-asset path (the hash-router client).
+const INDEX_HTML: &str = "index.html";
+
+/// Repo-root `dist-web/` directory (sibling of `src-tauri/`).
+///
+/// Resolved via `CARGO_MANIFEST_DIR` so serving works regardless of process CWD.
+pub fn dist_web_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist-web")
+}
+
+/// Whether `dist-web/index.html` exists on disk (dev diagnostics + the
+/// disk-or-embed serving decision).
+pub fn dist_web_ready() -> bool {
+    dist_web_dir().join(INDEX_HTML).is_file()
+}
+
+/// Whether the embedded (rust-embed) bundle carries `index.html` — true in a
+/// release binary where `dist-web/` is NOT on disk but the Vite bundle was
+/// embedded at cargo-build time (`#[folder = "../dist-web/"]`).
+pub fn embedded_web_ready() -> bool {
+    Assets::get(INDEX_HTML).is_some()
+}
+
+/// Disk-or-embed composition used by [`web_ui_available`]. Factored out so
+/// tests can force the "embed only, no disk" case that a shipped binary hits
+/// (issue #1802), independent of whether this build tree has `dist-web/`.
+fn web_ui_available_from(disk: bool, embed: bool) -> bool {
+    disk || embed
+}
+
+/// Whether the web UI can be served at all — from disk (`dist-web/`, dev) OR
+/// the embedded bundle (release). The "static routes will 404" warning must
+/// only fire when BOTH sources are absent; a shipped binary embeds the UI even
+/// though the compile-time `dist-web/` path does not exist on the user's disk.
+pub fn web_ui_available() -> bool {
+    web_ui_available_from(dist_web_ready(), embedded_web_ready())
+}
+
+/// ServeDir + SPA `index.html` fallback for the hash-router client (dev path).
+pub fn static_service() -> ServeDir<ServeFile> {
+    static_service_from(&dist_web_dir())
+}
+
+/// Same as [`static_service`], but with an injectable root (unit tests).
+pub fn static_service_from(dir: &Path) -> ServeDir<ServeFile> {
+    ServeDir::new(dir).fallback(ServeFile::new(dir.join(INDEX_HTML)))
+}
+
+/// Whether `path` is a Vite-hashed `/assets/*` request (last segment carries
+/// a `.` — the content-hash filename pattern Vite emits, e.g.
+/// `/assets/index-abc123.js`).
+///
+/// #857: `ServeDir` (the dev/disk path) sets only `Last-Modified`, so the
+/// disk path lacks the year-long immutable policy the embedded path already
+/// applies in [`embedded_response`]. A dotted client route like `/v1.2/assets`
+/// (last segment `assets`, no `.`) is not matched — same last-segment rule
+/// as [`last_segment_has_extension`].
+pub fn is_vite_hashed_asset_path(path: &str) -> bool {
+    path.starts_with("/assets/")
+        && path
+            .rsplit('/')
+            .next()
+            .is_some_and(|last| last.contains('.'))
+}
+
+/// Static-asset middleware for the disk `ServeDir` path (#857): sets
+/// `Cache-Control: public, max-age=31536000, immutable` on Vite-hashed
+/// `/assets/*` responses. Two guards keep it safe:
+///
+/// - **200-only** — a 404 must never be pinned for a year.
+/// - **Not-HTML** — `ServeDir`'s SPA fallback serves `index.html` (200!) for
+///   a MISSING asset whose request path looks like `/assets/foo.js`; the
+///   decision must key on the response, not just the request path, or the
+///   upgrade-critical shell would be pinned immutable. `text/html` is never
+///   an asset response (JS/CSS/fonts/images are their own MIME types).
+///
+/// Idempotent on the embedded path (which sets the same value in
+/// [`embedded_response`]). Layered inside [`static_compression_layer`] so
+/// the header is computed before the body is (re)framed.
+pub async fn immutable_asset_cache_headers(request: Request, next: Next) -> Response {
+    let is_asset = is_vite_hashed_asset_path(request.uri().path());
+    let mut response = next.run(request).await;
+    let not_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| !value.starts_with("text/html"));
+    if is_asset && response.status() == StatusCode::OK && not_html {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    response
+}
+
+/// Response compression for the web bundle (#857): gzip when the client's
+/// `Accept-Encoding` allows it. The 3.66 MB JS/CSS cold load drops to
+/// ~0.98 MB on the wire. tower-http's default predicate skips
+/// already-compressed content types (images/fonts), tiny bodies (<32 B), and
+/// SSE; a response already carrying `Content-Encoding` is never recompressed.
+/// WS upgrades bypass body framing entirely (101 has no body), so `/ws` and
+/// `/terminal/ws` are unaffected.
+///
+/// A 304 is never compressed: it has no body, and the encoder would add a
+/// `Content-Encoding` header to the bodiless reply from [`not_modified`].
+pub fn static_compression_layer() -> CompressionLayer<And<DefaultPredicate, CompressWhen>> {
+    let not_304: CompressWhen = |status, _, _, _| status != StatusCode::NOT_MODIFIED;
+    CompressionLayer::new().compress_when(DefaultPredicate::new().and(not_304))
+}
+
+/// Extra predicate of [`static_compression_layer`].
+pub type CompressWhen = fn(StatusCode, Version, &HeaderMap, &Extensions) -> bool;
+
+/// A bodiless `304 Not Modified`. Its body has no exact size, so axum adds
+/// no `Content-Length`. For HEAD, axum would otherwise set `Content-Length: 0`
+/// from an empty body, and hyper passes it through, while a GET 304 goes out
+/// without one. RFC 9110 §8.6 only allows Content-Length on a 304 when it
+/// equals the size a 200 would send, so `0` would tell caches the resource is
+/// empty (#1801). Hyper sends no body on a 304 either way.
+fn not_modified() -> Response {
+    let empty = futures_util::stream::empty::<Result<axum::body::Bytes, Infallible>>();
+    (StatusCode::NOT_MODIFIED, Body::from_stream(empty)).into_response()
+}
+
+/// Whether `path` is one of the unversioned shell/PWA files that must be
+/// revalidated on every load (the disk `ServeDir` path sets no
+/// `Cache-Control` of its own — without this, heuristic caching would let a
+/// stale `sw.js`/manifest/`index.html` stall PWA updates in source-checkout
+/// deployments). Vite-hashed `/assets/*` are deliberately NOT included — they
+/// are safe to cache by name (the embedded path even serves them
+/// `immutable`).
+fn is_shell_or_pwa_path(path: &str) -> bool {
+    path == "/"
+        || path == "/index.html"
+        || path == "/sw.js"
+        || path == "/manifest.webmanifest"
+        || path == "/favicon.ico"
+        || path.starts_with("/icons/")
+}
+
+/// Axum middleware: `Cache-Control: no-cache, must-revalidate` on responses
+/// for the unversioned shell/PWA files (`/`, `/index.html`, `/sw.js`,
+/// `/manifest.webmanifest`, `/favicon.ico`, `/icons/*`) — and on ANY
+/// `text/html` response, which covers the `ServeDir` SPA fallback serving
+/// `index.html` for client routes (`/some/client/route`) whose request path
+/// does not match the shell list. No API route produces `text/html`, so
+/// response-type matching cannot touch API policies. Layered onto the web
+/// router in [`super::router::router`] + [`super::router::router_with_static`]
+/// so the dev `ServeDir` path matches the embedded release path's policy —
+/// idempotent there (the embedded path already sets the same value).
+pub async fn shell_no_cache_headers(request: Request, next: Next) -> Response {
+    let is_shell = is_shell_or_pwa_path(request.uri().path());
+    let mut response = next.run(request).await;
+    // A client-route fallback returns the index.html BODY under an
+    // unlisted request path — key on the response type, not just the URI.
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
+    if is_shell || is_html {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, must-revalidate"),
+        );
+    }
+    response
+}
+
+/// Embedded web bundle (rust-embed). Compiled into BOTH the standalone
+/// `wrangl-server` binary and the desktop app — the desktop's in-process
+/// shared-live server serves the SAME embedded bundle in a release install
+/// (no `dist-web/` on disk). `#[allow_missing]` keeps dev/CI-compile green
+/// when the bundle is absent; the release build fails clearly via `build.rs`
+/// when it is missing (see the `web_embed_missing` cfg in `build.rs`).
+#[derive(rust_embed::Embed)]
+#[folder = "../dist-web/"]
+#[allow_missing = true]
+pub struct Assets;
+
+/// Axum handler: serve a path from the embedded [`Assets`], with SPA
+/// `index.html` fallback for the hash-router client. Used by
+/// [`super::router::router`] when `dist-web/` is not on disk (release installs).
+///
+/// - The root (`/`) or `/index.html` → `index.html`.
+/// - An embedded asset → served with its MIME + path-aware caching (see
+///   [`embedded_response`]): only Vite-hashed `assets/` output is immutable;
+///   everything else (`sw.js`, `manifest.webmanifest`, `icons/*`, …) is
+///   `no-cache, must-revalidate` so PWA updates are never stalled.
+/// - A path whose LAST segment has a `.` (looks like a static file, e.g.
+///   `/assets/index-abc.js`) but is NOT embedded → 404 (a real missing asset,
+///   not a route — mirrors the rust-embed axum-spa example). Checking only the
+///   LAST segment (not the whole path) avoids misclassifying dotted client
+///   routes like `/v1.2/home` (last segment `home`, no `.`) as assets.
+/// - Anything else (a client-side route, no `.` in the last segment) →
+///   `index.html` (the SPA boots + routes client-side).
+///
+/// Every embedded response carries a content-hash `ETag`; a GET or HEAD whose
+/// `If-None-Match` names it gets `304 Not Modified` with no body. Other
+/// methods ignore the validator.
+pub async fn serve_embedded(method: Method, uri: Uri, headers: HeaderMap) -> Response {
+    let validators = if matches!(method, Method::GET | Method::HEAD) {
+        headers
+    } else {
+        HeaderMap::new()
+    };
+    let path = uri.path().trim_start_matches('/');
+
+    if path.is_empty() || path == INDEX_HTML {
+        return embedded_index(&validators);
+    }
+
+    match Assets::get(path) {
+        Some(file) => embedded_file(file, path, &validators),
+        None => {
+            if last_segment_has_extension(path) {
+                (StatusCode::NOT_FOUND, "404 Not Found").into_response()
+            } else {
+                embedded_index(&validators)
+            }
+        }
+    }
+}
+
+/// `true` if the last path segment contains a `.` (looks like a static file,
+/// e.g. `index-abc.js`, `style.css`, `font.woff2`). Used to distinguish a
+/// missing asset (404) from a client-side route (SPA `index.html`).
+fn last_segment_has_extension(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|last| last.contains('.'))
+}
+
+/// Serve the embedded `index.html` (the SPA entry). `index.html` is the
+/// manifest that references the content-hashed asset chunks, so it must NOT be
+/// cached immutably (a cached stale `index.html` would request old hashed
+/// chunks absent from a new embed → 404 after an upgrade). The path-aware
+/// policy in [`embedded_response`] already gives it `no-cache,
+/// must-revalidate` — only `assets/` paths are immutable.
+fn embedded_index(request: &HeaderMap) -> Response {
+    match Assets::get(INDEX_HTML) {
+        Some(file) => embedded_file(file, INDEX_HTML, request),
+        None => (
+            StatusCode::NOT_FOUND,
+            "web bundle not embedded — run `bun run build:web` before building",
+        )
+            .into_response(),
+    }
+}
+
+/// Build an axum `Response` from embedded bytes + a metadata-derived
+/// Content-Type (rust-embed's `Metadata::mimetype` infers from the extension).
+///
+/// Cache policy is path-aware (`path` is the request path with the leading `/`
+/// trimmed, i.e. the rust-embed key):
+/// - `assets/*` — Vite content-hashed output — is cached immutably (the hash
+///   changes per build, so a stale cache never collides with a new name).
+/// - Everything else — `index.html`, `sw.js`, `manifest.webmanifest`,
+///   `icons/*`, `favicon.ico` — is `no-cache, must-revalidate`. Immutable
+///   caching on `sw.js`/the manifest would stall SW + install-metadata updates
+///   behind a year-long cache entry.
+fn embedded_response(mime: &str, data: Cow<'static, [u8]>, path: &str) -> Response {
+    // mime_guess maps `.webmanifest` → `application/manifest+json` on current
+    // versions, but pin it explicitly — a MIME DB that misses the extension
+    // would serve the manifest as octet-stream and silently break install.
+    let mime = if path.ends_with(".webmanifest") {
+        "application/manifest+json"
+    } else {
+        mime
+    };
+    let mime_val = HeaderValue::from_str(mime)
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+    let mut resp = ([(header::CONTENT_TYPE, mime_val)], Body::from(data)).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, cache_control(path));
+    resp
+}
+
+fn cache_control(path: &str) -> HeaderValue {
+    if path.starts_with("assets/") {
+        HeaderValue::from_static("public, max-age=31536000, immutable")
+    } else {
+        HeaderValue::from_static("no-cache, must-revalidate")
+    }
+}
+
+/// The tag is weak because the compression layer can re-encode the body, and
+/// `If-None-Match` compares weakly anyway.
+fn embedded_file(file: rust_embed::EmbeddedFile, path: &str, request: &HeaderMap) -> Response {
+    let opaque: String = file
+        .metadata
+        .sha256_hash()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let opaque = format!("\"{opaque}\"");
+    let mut resp = if if_none_match_names(request, &opaque) {
+        let mut resp = not_modified();
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, cache_control(path));
+        resp
+    } else {
+        embedded_response(file.metadata.mimetype(), file.data, path)
+    };
+    let etag =
+        HeaderValue::from_str(&format!("W/{opaque}")).expect("a quoted hex tag is a valid header");
+    resp.headers_mut().insert(header::ETAG, etag);
+    resp
+}
+
+fn if_none_match_names(request: &HeaderMap, opaque: &str) -> bool {
+    request
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| value.trim() == "*" || opaque_tags(value).any(|tag| tag == opaque))
+}
+
+/// RFC 9110 §13.1.2 entity-tag list. Commas inside a quoted tag belong to the
+/// tag, so the list is split on quotes, not commas.
+fn opaque_tags(list: &str) -> impl Iterator<Item = &str> {
+    let mut rest = list;
+    std::iter::from_fn(move || {
+        rest = rest.trim_start_matches([' ', '\t', ',']);
+        let tag = rest.strip_prefix("W/").unwrap_or(rest);
+        let end = tag.strip_prefix('"')?.find('"')? + 2;
+        let (opaque, tail) = tag.split_at(end);
+        rest = tail;
+        Some(opaque)
+    })
+}
+
+/// Embedded corral web bundle (spine AD-24), fetched by
+/// `scripts/canvas/fetch-corral-bundle.mjs` into `canvas/bundle/` before a
+/// release build and served under `/canvas/<id>/` by
+/// [`crate::canvas::static_server`]. Same mechanism as [`Assets`], so the
+/// desktop binary and `wrangl-server` carry one copy each with no Tauri
+/// resources. `#[allow_missing]` keeps dev/CI compiling without the fetch;
+/// requests then get the typed [`CODE_BUNDLE_MISSING`] response.
+#[derive(rust_embed::Embed)]
+#[folder = "../canvas/bundle/"]
+#[allow_missing = true]
+pub struct CanvasBundle;
+
+/// Stable error code for a request that reaches a build with no bundle.
+pub const CODE_BUNDLE_MISSING: &str = "BUNDLE_MISSING";
+
+/// Dev-only directory override for the bundle. Compiled out of release
+/// builds, which read the embedded set only (spine AD-22).
+#[cfg(debug_assertions)]
+pub const CANVAS_BUNDLE_DIR_ENV: &str = "WRANGL_CORRAL_BUNDLE";
+
+struct BundleFile {
+    mime: &'static str,
+    data: Cow<'static, [u8]>,
+    opaque: String,
+}
+
+fn bundle_dir_override() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var_os(CANVAS_BUNDLE_DIR_ENV)
+            .map(PathBuf::from)
+            .filter(|dir| !dir.as_os_str().is_empty())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
+}
+
+fn bundle_mime(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("txt" | "md") => "text/plain; charset=utf-8",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        _ => "application/octet-stream",
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn read_bundle_file(path: &str) -> Option<BundleFile> {
+    use sha2::Digest as _;
+    if path
+        .split('/')
+        .any(|part| matches!(part, ".." | "." | "") || part.contains(['\\', ':']))
+    {
+        return None;
+    }
+    if let Some(dir) = bundle_dir_override() {
+        let data = std::fs::read(dir.join(path)).ok()?;
+        return Some(BundleFile {
+            mime: bundle_mime(path),
+            opaque: hex(&sha2::Sha256::digest(&data)),
+            data: Cow::Owned(data),
+        });
+    }
+    let file = CanvasBundle::get(path)?;
+    Some(BundleFile {
+        mime: bundle_mime(path),
+        opaque: hex(&file.metadata.sha256_hash()),
+        data: file.data,
+    })
+}
+
+/// Whether the active bundle source (the dev override directory, else the
+/// embedded set) holds a non-empty `index.html`. An empty one would serve a
+/// blank canvas, so it counts as missing.
+pub fn canvas_bundle_available() -> bool {
+    read_bundle_file(INDEX_HTML).is_some_and(|file| !file.data.is_empty())
+}
+
+/// Typed 503 for a request that reaches a build without the bundle.
+pub fn canvas_bundle_missing_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({
+            "success": false,
+            "error": "the corral canvas bundle is not available in this build",
+            "code": CODE_BUNDLE_MISSING,
+        })),
+    )
+        .into_response()
+}
+
+/// Serve `path` (relative to the bundle root; empty means `index.html`) from
+/// the bundle. GET and HEAD only. Every response is `private, no-cache` with
+/// a content-hash `ETag`: the bundle sits behind a per-canvas credential, so
+/// it must revalidate rather than be replayed from a shared cache.
+///
+/// HEAD gets the full body, like [`serve_embedded`]: the axum route sets
+/// `Content-Length` from it and then drops the body, so HEAD reports the
+/// same length as GET (RFC 9110 §9.3.2). An empty body here would make
+/// that `Content-Length: 0` (#1728).
+pub fn canvas_bundle_response(method: &Method, path: &str, request: &HeaderMap) -> Response {
+    if !matches!(*method, Method::GET | Method::HEAD) {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    let path = if path.is_empty() { INDEX_HTML } else { path };
+    let Some(file) = read_bundle_file(path) else {
+        return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
+    };
+    let opaque = format!("\"{}\"", file.opaque);
+    let mut response = if if_none_match_names(request, &opaque) {
+        not_modified()
+    } else {
+        (
+            [(header::CONTENT_TYPE, HeaderValue::from_static(file.mime))],
+            Body::from(file.data),
+        )
+            .into_response()
+    };
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    if let Ok(etag) = HeaderValue::from_str(&format!("W/{opaque}")) {
+        headers.insert(header::ETAG, etag);
+    }
+    response
+}
+
+#[cfg(test)]
+mod tests;

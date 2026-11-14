@@ -1,0 +1,79 @@
+//! Desktop `#[tauri::command]` wrappers over the Claude Account operations of
+//! [`ClaudeAgentService`]. Adding, renaming and removing an Account, the link
+//! sign-in and stopping a sign-in are `/ws` requests only
+//! (`web::ws::claude_accounts`), which the desktop renderer reaches over its
+//! Tauri Channel carrier.
+
+use std::sync::Arc;
+
+use tauri::State;
+
+use crate::acp::claude_accounts::usage::ClaudeAccountUsage;
+use crate::acp::claude_accounts::ClaudeAccountsSnapshot;
+use crate::acp::{ClaudeAgentService, SignInCheck};
+
+#[tauri::command]
+pub async fn claude_accounts_list(
+    service: State<'_, Arc<ClaudeAgentService>>,
+) -> Result<ClaudeAccountsSnapshot, String> {
+    service.accounts_snapshot().await
+}
+
+/// Usage windows of every Account; `force` refreshes reads older than 60s.
+#[tauri::command]
+pub async fn claude_accounts_usage(
+    service: State<'_, Arc<ClaudeAgentService>>,
+    force: Option<bool>,
+) -> Result<Vec<ClaudeAccountUsage>, String> {
+    let service = Arc::clone(service.inner());
+    service.accounts_usage(force.unwrap_or(false)).await
+}
+
+/// Run the Claude browser login for one Account. Resolves when it finishes.
+#[tauri::command]
+pub async fn claude_accounts_login(
+    service: State<'_, Arc<ClaudeAgentService>>,
+    account_id: String,
+) -> Result<(), String> {
+    let service = Arc::clone(service.inner());
+    service.login_account(&account_id).await
+}
+
+#[tauri::command]
+pub async fn claude_accounts_set_default(
+    service: State<'_, Arc<ClaudeAgentService>>,
+    account_id: String,
+) -> Result<(), String> {
+    let service = Arc::clone(service.inner());
+    service
+        .set_default_account(&account_id, SignInCheck::Required)
+        .await
+}
+
+/// With `expected_account_id`, the choice applies only while the Project still
+/// uses that Account. Returns whether it applied.
+#[tauri::command]
+pub async fn claude_accounts_set_project(
+    service: State<'_, Arc<ClaudeAgentService>>,
+    project_id: String,
+    account_id: Option<String>,
+    expected_account_id: Option<String>,
+) -> Result<bool, String> {
+    let service = Arc::clone(service.inner());
+    service
+        .set_project_account(
+            &project_id,
+            account_id.as_deref(),
+            expected_account_id.as_deref(),
+            SignInCheck::Required,
+        )
+        .await
+}
+
+#[tauri::command]
+pub fn claude_accounts_set_auto_switch(
+    service: State<'_, Arc<ClaudeAgentService>>,
+    enabled: bool,
+) -> Result<(), String> {
+    service.set_auto_switch(enabled)
+}

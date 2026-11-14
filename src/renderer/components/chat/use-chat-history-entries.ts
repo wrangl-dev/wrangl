@@ -1,0 +1,370 @@
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import {
+  ACTIVE_GROUP,
+  groupSessionsByRecency,
+  type HistoryGroup,
+  type RecencyKey,
+  recencyTime,
+  scopeSessionIndex,
+  UNASSIGNED_GROUP,
+  unassignedSessions
+} from '@/lib/acp-history-persistence'
+import { activeWorktreeOf } from '@/lib/active-worktree'
+import { logFrontendError } from '@/lib/log-api'
+import {
+  conversationDeleteIds,
+  foldEntries,
+  sessionChainIndex,
+  UNTITLED_PATTERN
+} from '@/lib/session-chain'
+import { chatsMatchAnnouncement } from '@/lib/shell-announcements'
+import { useAcpStore } from '@/stores/acp-store'
+import { liveSwitchSources } from '@/stores/acp-store/shared-state'
+import { useActiveProject } from '@/stores/project-store'
+import { useShellAnnouncerStore } from '@/stores/shell-announcer-store'
+import { useWorktreePick } from '@/stores/shell-layout-store'
+import { useWorkspaceStore } from '@/stores/workspace-store'
+import type { ChatHistorySidebarEntry } from './ChatHistoryEntryRow'
+
+/** How many sidebar rows to render per lazy-load page. */
+export const SIDEBAR_PAGE_SIZE = 50
+
+/**
+ * How long the result count must hold still before it is announced, so typing
+ * "auth" does not announce the count for "a", "au" and "aut" on the way.
+ */
+const SEARCH_COUNT_ANNOUNCE_DEBOUNCE_MS = 500
+
+interface UseChatHistoryEntriesOptions {
+  /** Title filter. */
+  query: string
+  /** Scroll container the lazy-load observer watches. Defaults to the viewport. */
+  scrollRootRef?: RefObject<HTMLElement | null>
+  /**
+   * Entries merged into the scoped history (the mobile Recents list's open
+   * chats). One the scoped history already lists is dropped, so every chat
+   * appears once. Must be memoized.
+   */
+  extraEntries?: ChatHistorySidebarEntry[]
+  /**
+   * Ids of the chats open in the active project's tree (the mobile Recents
+   * list). The matching entries form an Active group listed first and always
+   * rendered, outside the lazy window. Must be memoized.
+   */
+  activeIds?: ReadonlySet<string>
+  /** The timestamp that sorts and buckets entries. Defaults to last activity. */
+  timeKey?: RecencyKey
+  /** Called after a chat row successfully opens (e.g. close a mobile drawer). */
+  onSessionOpened?: () => void
+  /** `log-api` source for a failed delete (the calling surface). */
+  logSource?: string
+}
+
+export interface ChatHistoryEntries {
+  /** Every scoped entry (extras merged in), unfiltered: empty means "no chats yet". */
+  mergedEntries: ChatHistorySidebarEntry[]
+  /** The entries matching the query, newest first by `timeKey`. */
+  filtered: ChatHistorySidebarEntry[]
+  /** The rendered entries of `filtered`: every active one, then the lazy window of the rest. */
+  visible: ChatHistorySidebarEntry[]
+  /** `visible` grouped Active, then Today / Yesterday / Earlier, then the Unassigned bucket. */
+  groups: { group: HistoryGroup; entries: ChatHistorySidebarEntry[] }[]
+  hasMore: boolean
+  /** Attach to the lazy-load sentinel below the list. */
+  sentinelRef: RefObject<HTMLDivElement>
+  loadMore: () => void
+  openEntry: (entry: ChatHistorySidebarEntry) => Promise<void>
+  deleteEntry: (id: string) => void
+}
+
+/**
+ * The chat history derivation shared by the desktop `ChatHistoryTab` and the
+ * mobile Recents list: ADR 0002 scoping, Wrangl-created sessions only, query
+ * filter, newest-first sort, the settled-count announcement, the Active group
+ * (mobile), the lazy window with its sentinel observer, recency groups, and
+ * the open/delete actions.
+ */
+export function useChatHistoryEntries({
+  query,
+  scrollRootRef,
+  extraEntries,
+  activeIds,
+  timeKey = 'lastActivityAt',
+  onSessionOpened,
+  logSource = 'ChatHistoryTab.delete'
+}: UseChatHistoryEntriesOptions): ChatHistoryEntries {
+  const sessionIndex = useAcpStore((s) => s.sessionIndex)
+  const openHistorySession = useAcpStore((s) => s.openHistorySession)
+  const openDiscoveredSession = useAcpStore((s) => s.openDiscoveredSession)
+  const deleteHistorySession = useAcpStore((s) => s.deleteHistorySession)
+  const addAgentChatTab = useWorkspaceStore((s) => s.addAgentChatTab)
+  // Subscribe to the full active-project record and the switcher pick so the
+  // sidebar re-scopes when the active worktree changes (not just when the
+  // active project id changes).
+  const activeProject = useActiveProject()
+  const activeProjectId = activeProject?.id ?? ''
+  const worktreePick = useWorktreePick(activeProjectId)
+  const activeCwd = useMemo(() => {
+    if (!activeProject) return ''
+    const wt = activeWorktreeOf(activeProject, worktreePick)
+    return wt?.path ?? activeProject.path ?? ''
+  }, [activeProject, worktreePick])
+
+  // Active project's registered worktree paths. Passed into `scopeSessionIndex`
+  // so worktree-cwd chats stay reachable from the project root view and across
+  // restarts where no worktree is picked (the sidebar would otherwise hide
+  // them because their cwd differs from the root). Re-derived whenever the
+  // active project record changes (covers reconciler discovery + launch adds).
+  const worktreePaths = useMemo(
+    () => activeProject?.worktrees?.map((w) => w.path) ?? [],
+    [activeProject]
+  )
+
+  // ADR 0002 scoping: show only sessions whose `(projectId, cwd)` match the
+  // active project + worktree/root, falling back to projectId-only matching
+  // when the exact cwd yields nothing (a chat whose cwd drifted since it was
+  // created is still reachable instead of silently hidden). Worktree-inclusive
+  // reachability (above) keeps the project's worktree chats listed from the
+  // root view. See `scopeSessionIndex` for the contract.
+  // Sessions the host stamped with the unassigned sentinel (no owning
+  // project) belong to no project's scope; they are listed in their own
+  // "Unassigned" bucket so they stay reachable.
+  const unassignedIds = useMemo(
+    () => new Set(unassignedSessions(sessionIndex).map((entry) => entry.id)),
+    [sessionIndex]
+  )
+  const scopedIndex = useMemo(
+    () => [
+      ...scopeSessionIndex(sessionIndex, activeProjectId, activeCwd, worktreePaths),
+      ...sessionIndex.filter((entry) => unassignedIds.has(entry.id))
+    ],
+    [sessionIndex, activeProjectId, activeCwd, worktreePaths, unassignedIds]
+  )
+
+  // Wrangl-created sessions only. The host-owned `discovered` flag is `false`
+  // for sessions Wrangl created (`register_session`) and `true` for external
+  // `session/list` mirrors — filter hides CLI/other-client chats.
+  // CAP-8 (spec-in-chat-agent-switch): a switched chat is ONE conversation —
+  // fold every `continuedFrom` chain to its terminal session before rows are
+  // built. The surviving row keeps the terminal id (open/reload land on the
+  // live session) and adopts the merged title/count/activity/agent sequence;
+  // `chainIds` keeps the absorbed ids so delete and the Active check still
+  // reach them. Display membership derives from the SCOPED index: a chain
+  // whose members cross a scope boundary degrades to per-scope rows rather
+  // than hiding a chat.
+  // Discovered mirrors leave before the fold: a chain must never fold into a
+  // row the list then hides.
+  const scopedChain = useMemo(
+    () => sessionChainIndex(scopedIndex.filter((e) => e.discovered !== true)),
+    [scopedIndex]
+  )
+  const foldedScopedIndex = useMemo(() => foldEntries(scopedChain), [scopedChain])
+
+  const mergedEntries = useMemo(() => {
+    const entries: ChatHistorySidebarEntry[] = foldedScopedIndex.map((e) => ({
+      id: e.id,
+      title: e.title,
+      messageCount: e.messageCount,
+      status: e.status,
+      discovered: false,
+      agentId: e.agentId,
+      agentConfigId: e.agentConfigId,
+      agents: e.agents,
+      chainIds: e.chainIds,
+      lastActivityAt: e.lastActivityAt,
+      createdAt: e.createdAt,
+      canOpen: true
+    }))
+
+    if (!extraEntries || extraEntries.length === 0) return entries
+    // An extra entry the scoped history already lists appears once, as
+    // history, under the extra's title (the one the row displays, e.g. an
+    // open chat's live title) so the search matches what the user sees.
+    const extraById = new Map(extraEntries.map((e) => [e.id, e]))
+    // An extra already appears once — as a listed row OR as an absorbed
+    // member of a folded chain row (an open pre-switch tab must not double).
+    const listed = new Set(entries.flatMap((e) => (e.chainIds !== undefined ? e.chainIds : [e.id])))
+    const merged = entries.map((e) => {
+      const direct = extraById.get(e.id)
+      if (direct !== undefined) {
+        // The row IS the open chat — its live title is what the user sees.
+        return direct.title !== e.title ? { ...e, title: direct.title } : e
+      }
+      const memberExtra =
+        e.chainIds !== undefined
+          ? e.chainIds.map((memberId) => extraById.get(memberId)).find((x) => x !== undefined)
+          : undefined
+      // An absorbed member's live title fills in only when the folded row has
+      // no real one — an open pre-switch tab's placeholder must not override
+      // the fold's newest real title.
+      return memberExtra !== undefined &&
+        memberExtra.title !== e.title &&
+        UNTITLED_PATTERN.test(e.title.trim()) &&
+        !UNTITLED_PATTERN.test(memberExtra.title.trim())
+        ? { ...e, title: memberExtra.title }
+        : e
+    })
+    const extras = extraEntries.filter((e) => !listed.has(e.id))
+    return extras.length > 0 ? [...extras, ...merged] : merged
+  }, [foldedScopedIndex, extraEntries])
+
+  // Lazy rendering: keep all results in memory but only render a growing window
+  // (a project can accumulate hundreds of sessions; rendering all rows is the cost).
+  const [visibleCount, setVisibleCount] = useState(SIDEBAR_PAGE_SIZE)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  // Filter the FULL set by query first (so search reaches every session, not
+  // just the rendered window), then sort newest-first so the visible cap keeps
+  // the most recent sessions.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const base =
+      q.length === 0
+        ? mergedEntries
+        : mergedEntries.filter((e) => e.title.toLowerCase().includes(q))
+    return base.slice().sort((a, b) => recencyTime(b, timeKey) - recencyTime(a, timeKey))
+  }, [mergedEntries, query, timeKey])
+
+  // Announce the settled result count to the mobile shell live region. Inert on
+  // the desktop sidebar, where no region is mounted. An empty query stays silent.
+  const trimmedQuery = query.trim()
+  const resultCount = filtered.length
+  useEffect(() => {
+    if (trimmedQuery.length === 0) return
+    const timer = setTimeout(() => {
+      useShellAnnouncerStore.getState().announce(chatsMatchAnnouncement(resultCount))
+    }, SEARCH_COUNT_ANNOUNCE_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [trimmedQuery, resultCount])
+
+  // Reset the window when the query or active scope changes. `worktreePaths`
+  // is a scoping input (worktree-inclusive reachability), so a reconciler
+  // discovery that grows the set without changing `activeCwd` must also reset
+  // the visible window — otherwise a stale "No matches"/window renders against
+  // the new scope.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on scope/query change
+  useEffect(() => {
+    setVisibleCount(SIDEBAR_PAGE_SIZE)
+  }, [query, activeProjectId, activeCwd, worktreePaths])
+
+  // Active entries keep `filtered`'s order and skip the window, so an open
+  // chat is never paged out; the window pages the rest.
+  const { active, windowed, hasMore } = useMemo(() => {
+    // A folded row is Active when ANY chain member is open — a pre-switch
+    // source still on screen keeps the conversation row highlighted.
+    const isActive = (entry: ChatHistorySidebarEntry): boolean =>
+      (activeIds?.has(entry.id) ?? false) ||
+      (entry.chainIds?.some((memberId) => activeIds?.has(memberId)) ?? false)
+    const activeEntries = activeIds && activeIds.size > 0 ? filtered.filter(isActive) : []
+    const rest = activeEntries.length > 0 ? filtered.filter((entry) => !isActive(entry)) : filtered
+    const page = rest.slice(0, visibleCount)
+    return { active: activeEntries, windowed: page, hasMore: rest.length > page.length }
+  }, [filtered, activeIds, visibleCount])
+  const visible = useMemo(
+    () => (active.length > 0 ? [...active, ...windowed] : windowed),
+    [active, windowed]
+  )
+
+  const groups = useMemo(() => {
+    const assigned = windowed.filter((entry) => !unassignedIds.has(entry.id))
+    const unassigned = windowed.filter((entry) => unassignedIds.has(entry.id))
+    const recency: { group: HistoryGroup; entries: ChatHistorySidebarEntry[] }[] =
+      groupSessionsByRecency(assigned, Date.now(), timeKey)
+    if (active.length > 0) recency.unshift({ group: ACTIVE_GROUP, entries: active })
+    if (unassigned.length > 0) recency.push({ group: UNASSIGNED_GROUP, entries: unassigned })
+    return recency
+  }, [active, windowed, unassignedIds, timeKey])
+
+  // Grow the window when the bottom sentinel scrolls into view (lazy load).
+  // `visibleCount` is intentionally in the deps so the observer re-arms after
+  // each growth: IntersectionObserver only fires on intersection transitions, so
+  // a sentinel already in view after a grow needs a fresh observe() to re-check.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: visibleCount re-arms the observer
+  useEffect(() => {
+    if (!hasMore) return
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (obsEntries) => {
+        if (obsEntries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => c + SIDEBAR_PAGE_SIZE)
+        }
+      },
+      { root: scrollRootRef?.current ?? null, rootMargin: '200px' }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, visibleCount, scrollRootRef])
+
+  const loadMore = useCallback(() => setVisibleCount((c) => c + SIDEBAR_PAGE_SIZE), [])
+
+  const openEntry = useCallback(
+    async (entry: ChatHistorySidebarEntry) => {
+      try {
+        if (entry.discovered && entry.agentId && entry.cwd) {
+          // Register the restore synchronously before focusing the tab so its
+          // first render shows the branded preload, then reconnect in the
+          // background just like local mirrors.
+          const opening = openDiscoveredSession(entry.agentId, entry.id, entry.cwd, activeProjectId)
+          addAgentChatTab(entry.id)
+          void opening.catch(() => {
+            toast.error('Could not open that chat. Try again.')
+          })
+        } else {
+          // Register the restore synchronously before focusing the tab so its
+          // first render cannot miss the branded preload. Reconnect continues
+          // in the background after the local transcript becomes usable.
+          const opening = openHistorySession(entry.id)
+          addAgentChatTab(entry.id)
+          void opening.catch(() => {
+            toast.error('Could not reconnect. Try again.')
+          })
+        }
+        onSessionOpened?.()
+      } catch {
+        toast.error('Could not open that chat. Try again.')
+      }
+    },
+    [addAgentChatTab, openHistorySession, openDiscoveredSession, activeProjectId, onSessionOpened]
+  )
+
+  // Deleting a folded row deletes the WHOLE conversation: membership resolves
+  // against the FULL index (not the scoped one) so a chain member outside the
+  // current worktree scope is removed too — it would otherwise resurface as a
+  // standalone row in another scope's view.
+  const deleteEntry = useCallback(
+    (id: string) => {
+      // Read at call time: a switch completing after render must not leave
+      // the newest continuation behind (membership from the FULL index —
+      // a member outside the current scope would otherwise resurface as a
+      // standalone row in another scope's view). Project scoping keeps a
+      // malformed cross-project edge from deleting another project's
+      // transcript; in-flight switch targets of a member are swept too.
+      const { sessionIndex: fullIndex } = useAcpStore.getState()
+      for (const memberId of conversationDeleteIds(fullIndex, id, liveSwitchSources)) {
+        void deleteHistorySession(memberId).catch(() => {
+          toast.error('Could not delete that chat. Try again.')
+          void logFrontendError({
+            level: 'warn',
+            source: logSource,
+            message: `Failed to delete chat history session ${memberId}`
+          })
+        })
+      }
+    },
+    [deleteHistorySession, logSource]
+  )
+
+  return {
+    mergedEntries,
+    filtered,
+    visible,
+    groups,
+    hasMore,
+    sentinelRef,
+    loadMore,
+    openEntry,
+    deleteEntry
+  }
+}

@@ -1,0 +1,67 @@
+# Wrangl
+
+Wrangl is a desktop workspace for coding. Each project gets its own terminals, editor tabs, git and worktree tools, and chats with ACP coding agents (Claude Agent, Codex, Gemini CLI, Cursor, OpenCode and others). It also does SSH and SFTP, and `wrangl-server` serves the same workspace to a browser or a phone.
+
+Runs on Windows, macOS and Linux. Built with Tauri 2, React and Rust.
+
+![Wrangl home screen](img/01-home.jpg)
+
+## Install
+
+Download the installer for your platform from the latest release:
+
+https://github.com/wrangl-dev/wrangl/releases/latest
+
+- macOS: `Wrangl_<version>_aarch64.dmg` (Apple Silicon) or `Wrangl_<version>_x64.dmg` (Intel)
+- Windows: the `.exe` or `.msi`
+- Linux: `Wrangl_<version>_amd64.AppImage`
+
+On macOS and Linux you can also use the install script, which checks the download against the release checksums:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.sh | bash
+```
+
+To run the server in Docker, see [`docs/deployment-guide.md`](docs/deployment-guide.md).
+
+## Build from source
+
+### Prerequisites
+
+You need [Bun](https://bun.sh) 1.3+ and a stable [Rust](https://www.rust-lang.org/tools/install) toolchain, plus the Tauri system packages for your OS:
+
+- macOS: `xcode-select --install`
+- Windows: Visual C++ Build Tools and the WebView2 runtime
+- Debian/Ubuntu:
+  ```bash
+  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+      libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+  ```
+
+The agent browser needs WebKitGTK 2.40 or later at runtime on Linux.
+
+### Build
+
+```bash
+git clone https://github.com/wrangl-dev/wrangl.git
+cd wrangl
+bun install
+bun run dev        # run the app in development mode
+bun run build      # build installers into src-tauri/target/release/bundle/
+```
+
+Other useful scripts:
+
+```bash
+bun run test       # unit tests (vitest)
+bun run typecheck
+bun run check      # biome lint + format
+```
+
+More docs: [`docs/`](docs/index.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+Third-party notices: `src-tauri/resources/licenses/`.

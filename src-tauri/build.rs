@@ -1,0 +1,129 @@
+use std::path::Path;
+
+/// Cfg set when a release-profile build would compile with Tauri's `cfg(dev)`
+/// on (no `custom-protocol`). The desktop entry point (`src/main.rs`) turns it
+/// into a `compile_error!`, so only the desktop binary is blocked: a build
+/// script cannot see which `--bin` targets Cargo selected, but the guard then
+/// fires exactly when the desktop binary compiles, whatever features are on.
+/// The `wrangl-server` binary (`server_main.rs`) and the library never trip it.
+const RELEASE_WITHOUT_CUSTOM_PROTOCOL_CFG: &str = "wrangl_release_without_custom_protocol";
+
+/// Whether a release-profile build lacks `custom-protocol`, which makes the
+/// desktop binary load `devUrl` and show "Could not connect to localhost".
+///
+/// `dev` is `tauri_build::is_dev()` (the `DEP_TAURI_DEV` value emitted by the
+/// `tauri` crate's build script, `true` whenever `tauri/custom-protocol` is
+/// off). The escape hatch `1` / `true` disables the guard.
+fn release_without_custom_protocol(profile: &str, dev: bool, allow_override: &str) -> bool {
+    profile == "release" && dev && !is_override_on(allow_override)
+}
+
+/// Cfg set when a release-profile build would embed no corral canvas
+/// bundle. A `compile_error!` in `src/web/assets.rs` turns it into a build
+/// failure for the library, so the desktop app and `wrangl-server` both stop.
+const CANVAS_BUNDLE_MISSING_CFG: &str = "canvas_bundle_missing";
+
+/// Escape hatch for a release build that deliberately ships without the
+/// canvas (`1` / `true`), for example an offline build or `cargo test
+/// --release`.
+const ALLOW_MISSING_CANVAS_BUNDLE_ENV: &str = "WRANGL_ALLOW_MISSING_CANVAS_BUNDLE";
+
+fn is_override_on(value: &str) -> bool {
+    matches!(value.trim(), "1" | "true")
+}
+
+/// Whether a release-profile build lacks `canvas/bundle/index.html` and the
+/// operator has not opted out with [`ALLOW_MISSING_CANVAS_BUNDLE_ENV`].
+fn release_without_canvas_bundle(profile: &str, has_bundle: bool, allow_override: &str) -> bool {
+    profile == "release" && !has_bundle && !is_override_on(allow_override)
+}
+
+fn main() {
+    // The Vite web build output (`../dist-web/`) is embedded into BOTH the
+    // standalone `wrangl-server` binary and the desktop app (the desktop's
+    // in-process shared-live server serves the embedded bundle in a release
+    // install). Watch it so a web-client rebuild triggers a cargo rebuild, for
+    // both build targets.
+    println!("cargo:rerun-if-changed=../dist-web");
+    // The corral web bundle (`canvas/bundle/`, fetched by
+    // `scripts/canvas/fetch-corral-bundle.mjs`) is embedded the same way.
+    // A missing bundle must not fail dev/CI, but a release build without it
+    // ships a canvas that answers BUNDLE_MISSING, so the release path hits the
+    // `compile_error!` in `web/assets.rs` unless the operator opts out.
+    println!("cargo:rerun-if-changed=../canvas/bundle");
+    println!("cargo:rerun-if-changed=../canvas/corral.pin");
+    println!("cargo:rustc-check-cfg=cfg({CANVAS_BUNDLE_MISSING_CFG})");
+    println!("cargo:rerun-if-env-changed={ALLOW_MISSING_CANVAS_BUNDLE_ENV}");
+    // Non-empty, as the CI `test -s` checks require: an empty index.html
+    // would embed a canvas that loads a blank page.
+    let has_canvas_bundle = std::fs::metadata("../canvas/bundle/index.html")
+        .is_ok_and(|meta| meta.is_file() && meta.len() > 0);
+    let allow_missing_canvas_bundle =
+        std::env::var(ALLOW_MISSING_CANVAS_BUNDLE_ENV).unwrap_or_default();
+    if release_without_canvas_bundle(
+        &std::env::var("PROFILE").unwrap_or_default(),
+        has_canvas_bundle,
+        &allow_missing_canvas_bundle,
+    ) {
+        println!("cargo:rustc-cfg={CANVAS_BUNDLE_MISSING_CFG}");
+    } else if !has_canvas_bundle && is_override_on(&allow_missing_canvas_bundle) {
+        println!(
+            "cargo:warning={ALLOW_MISSING_CANVAS_BUNDLE_ENV} is set: this build does not embed \
+             the corral canvas bundle, and the canvas answers BUNDLE_MISSING"
+        );
+    }
+
+    // Declare the custom `web_embed_missing` cfg so the 2024 edition's
+    // unexpected-cfg check doesn't reject the `#[cfg(web_embed_missing)]` in
+    // `assets.rs`.
+    println!("cargo:rustc-check-cfg=cfg(web_embed_missing)");
+    // Set by `.cargo/config.toml` (repo root and src-tauri) so async-process
+    // uses its SIGCHLD reaper instead of the Linux pidfd epoll loop.
+    println!("cargo:rustc-check-cfg=cfg(async_process_force_signal_backend)");
+
+    // Build sequencing + clear missing-bundle failure:
+    // `rust-embed`'s `#[allow_missing]` compiles an EMPTY embed when
+    // `dist-web/` is absent — fine for dev (`cargo check`/`cargo clippy`
+    // without `bun run build:web`) and CI compile-green. But a RELEASE build
+    // with a missing/stale bundle would ship a self-contained binary that 404s
+    // every static route — a silent deploy bug. Emit a `web_embed_missing` cfg
+    // so the release path (NOT debug) hits a `compile_error!` in `assets.rs`
+    // telling the operator to run `bun run build:web` first. The Vite build
+    // MUST run before `cargo build --bin wrangl-server` (rust-embed embeds at
+    // build time) — CI enforces this ordering (`.github/workflows/*`).
+    // `index.html` alone is not sufficient: a stale `dist-web/` that predates
+    // the PWA files would compile cleanly yet ship an `index.html` linking a
+    // manifest + registering a service worker that 404. Require the whole
+    // PWA surface — manifest, worker, favicon, and every install icon — so a
+    // stale bundle also trips the release-time gate.
+    let required = [
+        "index.html",
+        "manifest.webmanifest",
+        "sw.js",
+        "favicon.ico",
+        "icons/pwa-192.png",
+        "icons/pwa-512.png",
+        "icons/pwa-maskable-512.png",
+        "icons/apple-touch-icon.png",
+    ];
+    if required
+        .iter()
+        .any(|file| !Path::new("../dist-web").join(file).is_file())
+    {
+        println!("cargo:rustc-cfg=web_embed_missing");
+    }
+
+    // Block a raw release desktop build without `custom-protocol` (enforced by
+    // the `compile_error!` in `src/main.rs`).
+    println!("cargo:rustc-check-cfg=cfg({RELEASE_WITHOUT_CUSTOM_PROTOCOL_CFG})");
+    println!("cargo:rerun-if-env-changed=WRANGL_ALLOW_RELEASE_WITHOUT_CUSTOM_PROTOCOL");
+    if release_without_custom_protocol(
+        &std::env::var("PROFILE").unwrap_or_default(),
+        tauri_build::is_dev(),
+        &std::env::var("WRANGL_ALLOW_RELEASE_WITHOUT_CUSTOM_PROTOCOL").unwrap_or_default(),
+    ) {
+        println!("cargo:rustc-cfg={RELEASE_WITHOUT_CUSTOM_PROTOCOL_CFG}");
+    }
+
+    tauri_build::build()
+}

@@ -1,0 +1,24 @@
+[package]
+name = "corral-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corral PDF export (krilla): vector shapes, gradients, embedded images, aligned strokes as outlines, clips, masks, blend modes, real selectable text, effects as rasters, print options (bleed, marks, page boxes, CMYK)"
+
+[lints]
+workspace = true
+
+[dependencies]
+corral-geom = { workspace = true }
+corral-color = { workspace = true }
+corral-doc = { workspace = true }
+corral-text = { workspace = true }
+corral-render = { workspace = true }
+corral-pathops = { workspace = true }
+krilla = { workspace = true }
+tiny-skia = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+flate2 = "1"

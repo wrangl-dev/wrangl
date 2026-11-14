@@ -1,0 +1,337 @@
+# Wrangl - Deployment Guide
+
+**Date:** 2026-07-28
+
+## Overview
+
+Wrangl is distributed as a packaged Tauri desktop application. Releases are built on GitHub Actions, updater artifacts are signed with the existing Tauri minisign key, macOS bundles are additionally Developer ID signed and notarized, and one publish job owns every GitHub Release upload.
+
+## Packaging Model
+
+The app is bundled through Tauri with updater artifacts enabled by `createUpdaterArtifacts: true`. Runtime and production bundle settings live in:
+
+- `src-tauri/tauri.conf.json`
+- `src-tauri/tauri.conf.prod.json`
+
+The stable updater endpoint is:
+
+- `https://github.com/wrangl-dev/wrangl/releases/latest/download/latest.json`
+
+The desktop release build also creates `dist-web/` before compiling so the embedded browser client is present in both desktop binaries and the standalone Linux server.
+
+## Required Release Secrets
+
+All platform builds require the updater signing contract:
+
+- `TAURI_SIGNING_PUBLIC_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+Both macOS architecture jobs also require:
+
+- `APPLE_CERTIFICATE` — base64 Developer ID Application certificate (`.p12`)
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_ID`
+- `APPLE_PASSWORD` — app-specific password
+- `APPLE_TEAM_ID`
+
+The macOS jobs check these categories immediately after checkout, before dependency installation. Missing values fail with names only; values are never printed. The same job imports the `.p12` into a temporary keychain, then passes the signing identity, Apple ID, app-specific password, and Team ID into the macOS build so Tauri can sign and notarize the app and the DMG. The `codesign`, `spctl`, and `stapler` checks run on every macOS build.
+
+Stable Homebrew publication additionally requires:
+
+- `HOMEBREW_TAP_TOKEN` — write access to `wrangl-dev/homebrew-wrangl`
+
+The reusable Homebrew workflow resolves authoritative GitHub release metadata before this token is checked. Prereleases therefore still receive `SHA256SUMS.txt`, skip the tap update, and do not require the tap token.
+
+## Release Workflow
+
+`.github/workflows/release.yml` is triggered by `v*` tags. Tags must be full SemVer and may contain dotted prerelease/build identifiers, for example `v1.2.3-beta.1+macos.7`.
+
+The workflow order is:
+
+1. Generate the changelog, normalize the tag, and create/update a draft release.
+2. Build Windows x64, Linux x64, macOS arm64, and macOS Intel locally with `tauri-action` **without** `tagName`, `releaseId`, or other upload identifiers.
+3. Verify both macOS `.app` bundles and DMGs with `codesign`, `spctl`, and `stapler`, and reject non-portable Mach-O dependency or `LC_RPATH` entries before collecting them.
+4. Convert each platform's Tauri artifact output into an isolated workflow artifact containing release assets and a platform updater manifest.
+5. Build the standalone Linux server as one workflow artifact per architecture (x64 on `ubuntu-22.04`, arm64 on the native `ubuntu-22.04-arm` runner) after creating the embedded browser bundle.
+6. In one publish job, download every workflow artifact, reject conflicting asset names, deeply validate each updater `{url, signature}` record, reject conflicting duplicate platform records, require every supported updater key (desktop and both server keys), and authoritatively create `latest.json`.
+7. Upload all release assets and `latest.json` once, then publish the draft.
+8. Invoke the reusable Homebrew workflow for every release channel. It always generates `SHA256SUMS.txt`; only stable releases update the tap.
+9. Build the `linux/amd64` and `linux/arm64` container image from the published server assets and push it to `ghcr.io/wrangl-dev/wrangl-server` with BuildKit provenance and an SBOM. Every release gets a version tag. Only a stable release moves `latest`. The nightly workflow pushes the `nightly` tag the same way, and the Insider-to-Stable `promote` dispatch retags `latest` from the stable version tag without a rebuild. See [Run in Docker](#run-in-docker).
+
+No matrix/platform build job or standalone-server job is permitted to upload GitHub Release assets or write a shared `latest.json`.
+
+## Required Updater Platforms
+
+The centralized merge requires these updater platform keys:
+
+- `windows-x86_64`
+- `windows-x86_64-msi`
+- `windows-x86_64-nsis`
+- `linux-x86_64`
+- `linux-x86_64-appimage`
+- `linux-x86_64-deb`
+- `linux-x86_64-rpm`
+- `darwin-aarch64`
+- `darwin-aarch64-app`
+- `darwin-x86_64`
+- `darwin-x86_64-app`
+- `linux-x86_64-server` (asset `wrangl-server`)
+- `linux-aarch64-server` (asset `wrangl-server-linux-aarch64`)
+
+The two server keys come from the standalone-server job's per-architecture fragments. The aarch64 key is required, so a failed arm64 build fails the whole publish rather than shipping a release without it.
+
+Every record must have a nonempty URL and minisign signature. Missing keys, malformed records, version mismatches, and conflicting duplicate records fail before upload.
+
+## Platform Notes
+
+### Linux and Browser Bundle
+
+Linux desktop and standalone-server builds preserve the current Ubuntu 22.04 dependency setup, including WebKitGTK 2.40 or later (the agent browser links a call added in 2.40), appindicator, SVG, D-Bus, and `patchelf`. The standalone server builds natively on both architectures: `ubuntu-22.04` for x64 and `ubuntu-22.04-arm` for arm64, with no cross-compilation. Both build paths create and validate `dist-web/index.html` before Rust compilation so the in-process browser client is embedded rather than relying on files outside the installation.
+
+#### Installing `wrangl-server`
+
+The x64 asset is `wrangl-server`; the arm64 asset is `wrangl-server-linux-aarch64`. Pick the one matching `uname -m`:
+
+```bash
+case "$(uname -m)" in
+  x86_64)          asset=wrangl-server ;;
+  aarch64|arm64)   asset=wrangl-server-linux-aarch64 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+curl -fL -o wrangl-server "https://github.com/wrangl-dev/wrangl/releases/latest/download/$asset"
+chmod +x wrangl-server
+```
+
+`releases/latest/download/` resolves to the latest stable release only. For the nightly channel use `https://github.com/wrangl-dev/wrangl/releases/download/nightly/$asset`. Each asset has a minisign signature next to it (`$asset.sig`) and is listed in the release's `SHA256SUMS.txt`. The arm64 binary is built on Ubuntu 22.04 (glibc 2.35 or newer required), so musl-based distributions such as Alpine are not supported.
+
+The opt-in self-updater selects its manifest key from the architecture the binary was built for (`linux-x86_64-server` or `linux-aarch64-server`), so each host updates to its own binary and keeps the installed filename.
+
+### Windows
+
+Windows releases target `x86_64-pc-windows-msvc` and collect both MSI and NSIS updater records and signatures.
+
+### macOS Portability, Signing, and Notarization
+
+Both `aarch64-apple-darwin` and `x86_64-apple-darwin` are built. For these targets, the SSH dependency vendors OpenSSL so the packaged app does not require Homebrew OpenSSL on user systems.
+
+The macOS collection gate requires exactly one `.app` and one DMG, resolves the app's declared `CFBundleExecutable`, and inspects that executable with `otool -L` and `otool -l`. It permits system libraries and relocatable `@rpath`, `@loader_path`, and `@executable_path` dependencies, but rejects Homebrew/local prefixes, runner-local absolute paths, unexpected relative load paths, and non-portable `LC_RPATH` entries. It then runs:
+
+```bash
+codesign --verify --deep --strict --verbose=2 "Wrangl.app"
+spctl --assess --type execute --verbose=4 "Wrangl.app"
+xcrun stapler validate "Wrangl.app"
+codesign --verify --strict --verbose=2 Wrangl_*.dmg
+spctl --assess --type open --context context:primary-signature --verbose=4 Wrangl_*.dmg
+xcrun stapler validate Wrangl_*.dmg
+```
+
+After maintainers provision the Apple secrets, repeat these checks against both architectures on a real release.
+
+## Homebrew and Checksums
+
+`.github/workflows/publish-homebrew.yml` is both reusable and manually dispatchable. It:
+
+1. validates full SemVer input;
+2. queries the GitHub release's `isPrerelease` metadata;
+3. downloads all release assets and uploads `SHA256SUMS.txt` for stable and prerelease channels;
+4. skips the tap job for prereleases without evaluating `HOMEBREW_TAP_TOKEN`;
+5. for stable releases, strictly resolves exactly one checksum for each macOS DMG and updates the cask idempotently;
+6. serializes reusable workflow runs with tap-wide concurrency so different release versions cannot race while pushing the cask.
+
+## Additional Distribution Workflow
+
+`.github/workflows/publish-aur.yml` remains the separate Arch Linux AUR publication workflow. It is not part of the centralized GitHub Release asset upload path.
+
+## PWA / Installable Web Client
+
+The web bundle (`dist-web/`, served by `wrangl-server` and the desktop shared-live host) is installable as a Progressive Web App. `public/manifest.webmanifest`, `public/sw.js`, and `public/icons/` ship inside the bundle, and `index.html` links the manifest, favicon, `apple-touch-icon`, and the og/twitter card image.
+
+**Install requirements.** Service workers and browser install prompts are gated by the platform secure-context rule: the client must be reached over `https://` (for example through the cloudflared tunnel) or via `localhost`. A plain `http://<LAN-IP>` visit stays a normal browser tab — registration is skipped deliberately and logged via `console.info` (the backend `POST /log/frontend-error` endpoint is loopback-gated, so a report from a non-loopback origin would be refused anyway). The desktop app never registers a service worker.
+
+**Installing.** There is no in-app install button by design — use the browser-native affordance:
+
+- Desktop Chrome/Edge: the install icon in the address bar (or menu → "Install Wrangl").
+- Android Chrome: menu → "Add to Home screen" / install prompt.
+- iOS Safari: Share → "Add to Home Screen" (`apple-mobile-web-app-capable` + `black-translucent` status bar + opaque `apple-touch-icon` are set).
+
+Launched installed, the app runs `display: standalone` with the Wrangl name/icon. `start_url`/`scope` are `/`. Token auth normally carries over because `web-auth-token.ts` moves the `#token=` fragment into `localStorage` and strips it from the URL on first load.
+
+**iOS caveat.** Home-screen web apps get an isolated `localStorage` separate from Safari's. On a token-gated server the token stored in the browser tab does NOT carry into the installed iOS app — since `#token=` is consumed into `localStorage` on first load, the installed app may need the token re-entered once in its own storage. This is a web-auth limitation, not PWA-specific.
+
+**Notifications need HTTPS too.** Browser notifications (terminal idle/exit,
+agent chat turn finished / permission or question waiting) use the Web
+Notifications API, which — like service workers — is gated on a secure
+context. Over plain `http://<LAN-IP>` the send path no-ops: the permission
+prompt never appears and no notifications arrive. Serve over `https://`
+(or `localhost`) for notifications; they are also skipped while the tab is
+already showing the chat or terminal that finished, by design.
+
+**Token re-entry.** On a token-gated server the web client probes a
+gated route at boot; a missing or rotated token opens a token-entry screen
+instead of hanging on "Loading...", so an installed iOS PWA can re-enter a
+token even though it cannot edit its URL to add `#token=`.
+
+**Update semantics.** `sw.js` runtime-caches the static shell only — it never intercepts `/ws`, `/terminal/ws`, or any API route (non-GET and cross-origin requests pass straight through), and never caches API responses. Per-path policy:
+
+- `/assets/*` (Vite content-hashed) → **cache-first**, keyed by pathname (query strings ignored).
+- `index.html`, `/manifest.webmanifest`, `/sw.js`, `/favicon.ico`, `/icons/*` → **network-first** — unversioned files are never pinned behind a stale cache entry.
+- Same-origin GET navigations → **network-first with an 8s `AbortSignal` timeout** (feature-detected; older iOS SW runtimes lack `AbortSignal.timeout`), falling back to the cached `/` shell when the fetch rejects *or answers HTTP 5xx* (a tunnel/proxy 502/503 is the same outage as a refused connection; 4xx responses are real and pass through) — including non-allowlisted paths so a deep-link reload boots the app instead of a browser error page (non-allowlisted responses are never stored).
+
+Cache writes are `event.waitUntil`-covered so the worker can't terminate mid-`put`; a missing or rejecting CacheStorage degrades to a plain `fetch`. `install` precaches the shell files *plus* the hashed `/assets/*` entry bundle parsed from the cached `index.html` — without it, an offline installed launch could open cached HTML whose JS/CSS lived only in the evictable HTTP cache. `install` also calls `self.skipWaiting()` so open tabs don't stall updates. Quota stays bounded: `/assets/*` puts skip bodies over 8 MiB (by `Content-Length`) and each write trims the set to the newest 150 entries — a deploy that leaves `sw.js` unchanged never re-`activate`s, so trimming cannot wait for activation alone; `activate` still purges stale `wrangl-pwa-*` caches and re-trims as a safety net.
+
+Server headers mirror the policy: the embedded release path serves `assets/` immutable and everything else `no-cache, must-revalidate`, and the disk `ServeDir` path (source-checkout deploys) gets the same shell `no-cache` via the `shell_no_cache_headers` router middleware.
+
+**`CACHE_NAME` discipline.** Bump `wrangl-pwa-vN` in `public/sw.js` whenever the caching strategy or allowlist changes — `activate` purges every other `wrangl-pwa-*` cache, so the bump is what evicts entries shaped by the old policy.
+
+**Offline scope.** The app is a thin shell over a live server — offline startup reaches the normal connection-error UI; terminals and chat still require the host.
+
+**Manual verification.** Serve the client over `https://` or `localhost`, then in Chrome/Edge DevTools → **Application**: the Manifest tab shows name/icons with no errors; Service Workers shows `sw.js` activated and running; the install icon appears in the address bar (criteria met). `curl -I` on `/sw.js`, `/manifest.webmanifest`, `/index.html`, and an `/icons/*` file should show `Cache-Control: no-cache, must-revalidate` (and `application/manifest+json` for the manifest); a hashed `/assets/*` file shows `immutable`. On iOS, Share → "Add to Home Screen" should preview the opaque icon and "Wrangl" title.
+
+## Standalone server origins
+
+`wrangl-server` checks an `Origin` header when a client sends one. The header must name the same host and port as the request's `Host` header, or an origin passed to `--allowed-origins` / `WRANGL_ALLOWED_ORIGINS`. The embedded web client is served by the same process, so its requests match without an extra entry. Clients that omit `Origin` are unchanged, and `--web-auth-token` / `WRANGL_WEB_AUTH_TOKEN` still apply on their own.
+
+A reverse proxy that preserves the public `Host` header (Caddy and cloudflared do this by default) matches `https://<public-host>` with no extra origin. When the proxy rewrites `Host` to the upstream address, list the public origin explicitly:
+
+```bash
+wrangl-server --host 127.0.0.1 --port 8080 \
+    --allowed-origins https://wrangl.example.com
+```
+
+Comma-separate several origins, or repeat `--allowed-origins`. The flag replaces `WRANGL_ALLOWED_ORIGINS` when both are set. The server does not send `Access-Control-Allow-Origin`.
+
+A server that runs without a bearer token also checks the `Host` header, so a DNS-rebinding page cannot reach it. It answers IP literals, `localhost`, and the hosts of `--allowed-origins`, and returns `403` for any other name. To reach a token-less server by a host name, such as a proxy that keeps the public `Host` header, list that origin with `--allowed-origins`. A server that requires the token accepts any `Host`, because a rebinding page cannot present the token.
+
+The desktop app talks to the host through Tauri IPC, not these HTTP or WebSocket routes. The desktop shared-live server uses the same origin check. Browser clients of that server are served by it, so they match the request host. It always requires its token, so like a gated standalone server it answers any `Host` (its cloudflared tunnel host, a LAN or MagicDNS name, a reverse proxy name).
+
+## Run in Docker
+
+`Dockerfile` and `docker-compose.yml` at the repository root run `wrangl-server` in a container as the non-root user `wrangl`. The image holds the published release binary for `linux/amd64` or `linux/arm64`, plus `bash`, `git`, `ssh`, and `curl`. The build checks the binary's minisign signature against the updater public key in `src-tauri/tauri.conf.json`. Release tags publish the image to `ghcr.io/wrangl-dev/wrangl-server`, and the nightly workflow publishes the `nightly` tag. The image's entrypoint is `/usr/bin/tini -- /usr/local/bin/wrangl-server`, so keep `tini` in an override, and `command` holds only server options.
+
+### Start the server
+
+1. In the directory that holds `docker-compose.yml`, create the workspace directory: `mkdir -p workspace`.
+2. Start the container: `docker compose up -d`. Compose pulls `ghcr.io/wrangl-dev/wrangl-server:latest`. If it cannot pull the image, it builds one from the newest stable release.
+3. Read the auth token:
+
+	```bash
+	docker compose exec wrangl-server cat /home/wrangl/.local/state/wrangl/web-auth-token
+	```
+
+4. Open `http://localhost:8080/#token=<token>`.
+5. In the web UI, add `/workspace` or a folder under it as a project.
+
+Inside the container the server binds `0.0.0.0`, so it always requires the token. On first start it generates the token, stores it in the `wrangl-home` volume, and never prints it. To set your own token, put `WRANGL_WEB_AUTH_TOKEN=<token>` in a `.env` file next to `docker-compose.yml`. The token then shows in `docker inspect` output.
+
+Compose publishes the port on `127.0.0.1` only. Changing the mapping to `8080:8080` exposes the server on every host network, over plain HTTP. For remote access, put an HTTPS reverse proxy in front instead.
+
+The token is a full credential. A holder of the token gets a shell and can start agents as the `wrangl` user, with every SSH key and agent login in `/home/wrangl` within reach. The holder can also register any path the container can see as a project. Treat the token like an SSH private key. Never expose the port beyond localhost without TLS and a reverse proxy you trust.
+
+### Know what the container can see
+
+| Path in the container | Source | Contents |
+| --- | --- | --- |
+| `/home/wrangl` | `wrangl-home` named volume | The state directory `.local/state/wrangl` (sessions, `projects.json`, `store.json`, `web-auth-token`), plus the home directory of the shells and agents the server starts: git config, SSH keys, agent logins. |
+| `/workspace` | `./workspace` bind mount, or `WRANGL_WORKSPACE` | Your projects. This is the only host directory the server can see. |
+| `/tmp` | tmpfs, mounted `exec` | Scratch files and helper binaries. Cleared when the container stops. |
+
+The root filesystem is read-only, the container drops every Linux capability, and `no-new-privileges` is set. If a tool you run in Wrangl must write somewhere else, remove `read_only: true` from `docker-compose.yml`.
+
+Compose sets `WRANGL_SERVER_ALLOW_REMOTE_WRITES=true`. Browser requests reach the container from the Docker network, never from loopback. Without the setting, the server refuses project registration and every file and git write. With it, writes stay confined to registered projects, and the token is still required.
+
+### Match the workspace owner
+
+The `wrangl` user has UID 1000 and GID 1000. It must be able to write to the workspace. If your host user has other IDs, build the image with them before the first start:
+
+```bash
+WRANGL_UID=$(id -u) WRANGL_GID=$(id -g) docker compose up -d --build
+```
+
+The files in `wrangl-home` belong to the UID that created them. If you change the UID after the first start, run `chown -R` on the volume's files, or delete the volume with `docker compose down --volumes`. Deleting the volume also deletes the token, sessions, and project registry.
+
+### Add agent CLIs
+
+The image contains no agent CLIs such as Claude Code or Codex. `PATH` starts with `/home/wrangl/.local/bin`, so a tool installed there persists in the `wrangl-home` volume. For tools that need system packages, build a derived image: start `FROM ghcr.io/wrangl-dev/wrangl-server`, install as `root`, and end with `USER wrangl`.
+
+### Put a reverse proxy in front
+
+Run the proxy on the host and forward to `127.0.0.1:8080`, with WebSocket upgrades enabled. A proxy that keeps the public `Host` header needs no extra setting. Caddy does this by default:
+
+```
+wrangl.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+If the proxy rewrites `Host` to the upstream address, add the public origin to `.env`:
+
+```bash
+WRANGL_ALLOWED_ORIGINS=https://wrangl.example.com
+```
+
+A proxy container on the same Compose network reaches the server at `wrangl-server:8080`. In that case, remove the `ports` entry.
+
+### Update the image
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+State stays in the `wrangl-home` volume. The image does not turn on self-update, and the server cannot replace its root-owned binary, so a new image is the only update path. To pin a version, set `WRANGL_IMAGE=ghcr.io/wrangl-dev/wrangl-server:<version>` in `.env`. Use `:nightly` to follow the nightly channel.
+
+To build the image yourself, set `WRANGL_RELEASE` to a release tag such as `v0.1.0` or `nightly`, then run `docker compose up -d --build`. The default, `latest`, is the newest stable release. An `arm64` build needs a release that publishes `wrangl-server-linux-aarch64`.
+
+## Operational Risks and Release Checklist
+
+- Version mismatches across JS, Rust, and Tauri configuration fail the release.
+- Missing updater or Apple signing credentials block the affected build before publication.
+- Missing signatures, missing updater keys, malformed URLs, conflicting manifests, or conflicting duplicate asset names fail the centralized publish job.
+- Updater key rotation must be coordinated carefully to avoid breaking existing clients.
+
+Recommended release checks:
+
+1. Run focused release validation and normal repository CI validation.
+2. Confirm version parity in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+3. Confirm updater, Apple, and stable Homebrew secrets are provisioned for the intended channel.
+4. Push the release tag.
+5. Confirm both macOS portability/signing/notarization gates pass and that both `standalone-server` matrix entries (x64 and arm64) succeed.
+6. Confirm the centralized publish job reports every required updater platform and uploads installers, updater archives, `.sig` files, `wrangl-server`, `wrangl-server-linux-aarch64`, their `wrangl-server` copies, and `latest.json` exactly once.
+7. Confirm `SHA256SUMS.txt` exists; for stable releases, confirm the Homebrew cask update succeeds.
+8. Confirm the `Publish container image` job pushed `ghcr.io/wrangl-dev/wrangl-server:<version>` and `ghcr.io/wrangl-dev/wrangl-server:<version>`, and `latest` for a stable release. Nightly runs push `:nightly`, and a `promote` dispatch retags `:latest` on both names from the stable version tag. A new package is private, so after the first `wrangl-server` publish set the package to public on its GitHub package page.
+
+## Local Validation
+
+Focused release validation does not require broad application builds:
+
+```bash
+actionlint .github/workflows/release.yml .github/workflows/publish-homebrew.yml
+bun run test -- scripts/release/prepare-platform-artifacts.test.ts scripts/release/merge-updater-manifests.test.ts
+npx bats scripts/tests/homebrew-release.bats
+node --check scripts/release/prepare-platform-artifacts.mjs
+node --check scripts/release/merge-updater-manifests.mjs
+bash -n scripts/release/homebrew.sh
+```
+
+Normal pre-PR validation remains `bun run ci`, `bun run typecheck`, `bun run test`, Rust clippy/tests, and the repository's CI/CodeRabbit gates.
+
+## Related Files
+
+- `.github/workflows/release.yml`
+- `.github/workflows/publish-homebrew.yml`
+- `.github/workflows/publish-aur.yml`
+- `.github/workflows/docker.yml`
+- `Dockerfile`
+- `docker-compose.yml`
+- `scripts/release/prepare-platform-artifacts.mjs`
+- `scripts/release/merge-updater-manifests.mjs`
+- `scripts/release/homebrew.sh`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/tauri.conf.prod.json`
+- `public/manifest.webmanifest`
+- `public/sw.js`
+- `public/icons/`
+- `src/renderer/lib/pwa-register.ts`
+- `index.html`

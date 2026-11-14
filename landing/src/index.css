@@ -1,0 +1,229 @@
+@import "tailwindcss";
+@import "./styles/transitions-root.css";
+@import "./styles/transitions.css";
+
+@theme {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Black and white only. Ink #0A0A0A, white #FFFFFF, greys between. */
+  --color-ink: #0a0a0a;
+  --color-pitch-black: #0a0a0a;
+  --color-graphite: #111111;
+  --color-deep-slate: #161616;
+  --color-charcoal-grey: #1f1f1f;
+  --color-muted-ash: #2a2a2a;
+  --color-gunmetal: #3a3a3a;
+  --color-porcelain: #ffffff;
+  --color-light-steel: #d4d4d4;
+  --color-storm-cloud: #a3a3a3;
+  --color-fog-grey: #8a8a8a;
+  --color-alabaster: #e5e5e5;
+  --color-neon-lime: #ffffff;
+  --color-aether-blue: #ffffff;
+  --color-forest-green: #a3a3a3;
+  --color-cyan-spark: #d4d4d4;
+  --color-emerald: #d4d4d4;
+  --color-warning-red: #d4d4d4;
+  --color-deep-violet: #a3a3a3;
+  --color-amethyst: #a3a3a3;
+
+  /* Semantic aliases */
+  --color-background: var(--color-ink);
+  --color-foreground: #ffffff;
+  --color-muted: var(--color-graphite);
+  --color-muted-foreground: var(--color-storm-cloud);
+  --color-text-muted: var(--color-fog-grey);
+  --color-text-muted-hover: var(--color-light-steel);
+  --color-accent: color-mix(in srgb, #ffffff 8%, transparent);
+  --color-border: var(--color-muted-ash);
+  --color-border-subtle: color-mix(in srgb, #ffffff 14%, transparent);
+  --color-primary: #ffffff;
+  --color-ring: #ffffff;
+
+  /* Surface scale (maps legacy gray-* utilities to brand tokens) */
+  --color-gray-900: var(--color-deep-slate);
+  --color-gray-800: var(--color-charcoal-grey);
+  --color-gray-700: var(--color-muted-ash);
+  --color-gray-600: var(--color-gunmetal);
+  --color-gray-500: var(--color-fog-grey);
+  --color-gray-400: var(--color-storm-cloud);
+  --color-gray-300: var(--color-light-steel);
+  --color-gray-200: var(--color-alabaster);
+  --color-gray-100: #ffffff;
+
+  /* Feature fallback visuals were drawn with hues; flatten them to greys. */
+  --color-blue-300: #d4d4d4;
+  --color-blue-400: #a3a3a3;
+  --color-blue-500: #8a8a8a;
+  --color-green-300: #d4d4d4;
+  --color-green-400: #a3a3a3;
+  --color-green-500: #8a8a8a;
+  --color-emerald-300: #d4d4d4;
+  --color-emerald-400: #a3a3a3;
+  --color-emerald-500: #8a8a8a;
+  --color-indigo-300: #d4d4d4;
+  --color-indigo-400: #a3a3a3;
+  --color-indigo-500: #8a8a8a;
+  --color-purple-300: #d4d4d4;
+  --color-purple-400: #a3a3a3;
+  --color-purple-500: #8a8a8a;
+  --color-violet-300: #d4d4d4;
+  --color-violet-400: #a3a3a3;
+  --color-violet-500: #8a8a8a;
+  --color-rose-300: #d4d4d4;
+  --color-rose-400: #a3a3a3;
+  --color-rose-500: #8a8a8a;
+  --color-red-300: #d4d4d4;
+  --color-red-400: #a3a3a3;
+  --color-red-500: #8a8a8a;
+  --color-amber-300: #d4d4d4;
+  --color-amber-400: #a3a3a3;
+  --color-amber-500: #8a8a8a;
+  --color-yellow-300: #d4d4d4;
+  --color-yellow-400: #a3a3a3;
+  --color-yellow-500: #8a8a8a;
+  --color-cyan-300: #d4d4d4;
+  --color-cyan-400: #a3a3a3;
+  --color-cyan-500: #8a8a8a;
+  --color-sky-300: #d4d4d4;
+  --color-sky-400: #a3a3a3;
+  --color-sky-500: #8a8a8a;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  :focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 3px;
+  }
+
+  :root {
+    color-scheme: dark;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  }
+
+  .os-theme-wrangl {
+    --os-size: 10px;
+    --os-padding-perpendicular: 3px;
+    --os-padding-axis: 8px;
+    --os-handle-bg: color-mix(in srgb, var(--color-light-steel) 32%, transparent);
+    --os-handle-bg-hover: color-mix(in srgb, var(--color-light-steel) 54%, transparent);
+    --os-handle-bg-active: color-mix(in srgb, var(--color-porcelain) 72%, transparent);
+    --os-handle-border-radius: 999px;
+    --os-track-bg: transparent;
+    --os-track-bg-hover: color-mix(in srgb, var(--color-porcelain) 4%, transparent);
+  }
+}
+
+@layer utilities {
+  .pressable {
+    transition: transform 160ms var(--ease-out), opacity 160ms var(--ease-out), background-color 160ms var(--ease-out);
+  }
+  .pressable:active {
+    transform: scale(0.97);
+  }
+
+  .animate-in {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 500ms var(--ease-out), transform 500ms var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      transform: translateY(24px);
+    }
+  }
+
+  .delay-100 { transition-delay: 100ms; }
+  .delay-200 { transition-delay: 200ms; }
+  .delay-300 { transition-delay: 300ms; }
+  .delay-400 { transition-delay: 400ms; }
+
+  .t-emphasis-fade {
+    opacity: 1;
+    transition: opacity var(--duration-very-slow) var(--ease-smooth-out);
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-in {
+      transition: opacity 200ms ease;
+      transform: none;
+
+      @starting-style {
+        opacity: 0;
+        transform: none;
+      }
+    }
+
+    .t-emphasis-fade {
+      transition: none;
+    }
+
+    .delay-100,
+    .delay-200,
+    .delay-300,
+    .delay-400 {
+      transition-delay: 0ms;
+    }
+  }
+}
+
+@layer components {
+  /* Scroll reveal: transform + opacity only. Prerendered HTML starts shown. */
+  .reveal {
+    transition:
+      opacity 400ms var(--ease-out),
+      transform 400ms var(--ease-out);
+  }
+  .reveal:not(.is-shown) {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  /* Blinking block cursor. */
+  .term-cursor {
+    display: inline-block;
+    width: 0.6em;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: #ffffff;
+    animation: term-blink 1.1s steps(1, end) infinite;
+  }
+  @keyframes term-blink {
+    50% { opacity: 0; }
+  }
+
+  /* Prerendered HTML holds the full log (for crawlers and no-JS); when motion is allowed,
+     hide it until HeroTerminal starts typing so it does not flash then reset. */
+  html.term-armed .term-log:not([data-started]) > * {
+    visibility: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { transition: none; }
+    .reveal:not(.is-shown) { opacity: 1; transform: none; }
+    .term-cursor { animation: none; }
+  }
+}

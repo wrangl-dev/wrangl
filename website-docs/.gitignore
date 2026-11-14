@@ -1,0 +1,10 @@
+.DS_Store
+/node_modules/
+
+# React Router
+/.react-router/
+/build/
+.source
+
+# Downloaded from the latest release at deploy time (deploy-docs.yml).
+/public/openapi.yaml

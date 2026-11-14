@@ -1,0 +1,217 @@
+import type {
+  AgentTool,
+  ApprovalDecision,
+  Automation,
+  AutomationNode,
+  AutomationRun,
+  NodeKind,
+  NodeSpec,
+  RunStatus,
+  RunTrigger,
+  StepStatus,
+  Trigger
+} from '@shared/types/automation.types'
+import {
+  Bot,
+  Braces,
+  Clock,
+  GitBranch,
+  GitMerge,
+  Globe,
+  Hand,
+  Hourglass,
+  Repeat,
+  Wrench,
+  XCircle,
+  Zap
+} from '@/components/icons'
+
+/** What the list and the header show; needs-approval wins because it asks the user to act. */
+export type AutomationState = 'needs_approval' | 'disabled' | 'armed'
+
+export function automationState(automation: Automation): AutomationState {
+  if (automation.approved_revision !== automation.revision) return 'needs_approval'
+  return automation.enabled ? 'armed' : 'disabled'
+}
+
+export const STATE_PRESENTATION: Record<AutomationState, { label: string; className: string }> = {
+  armed: { label: 'Armed', className: 'bg-success/20 text-success' },
+  needs_approval: { label: 'Needs approval', className: 'bg-warning/20 text-warning' },
+  disabled: { label: 'Disabled', className: 'bg-muted text-muted-foreground' }
+}
+
+export const STATUS_PRESENTATION: Record<
+  RunStatus | StepStatus,
+  { label: string; className: string }
+> = {
+  running: { label: 'Running', className: 'text-primary' },
+  succeeded: { label: 'Succeeded', className: 'text-success' },
+  failed: { label: 'Failed', className: 'text-destructive' },
+  cancelled: { label: 'Cancelled', className: 'text-muted-foreground' },
+  skipped: { label: 'Skipped', className: 'text-muted-foreground' },
+  waiting: { label: 'Waiting', className: 'text-warning' }
+}
+
+export const NODE_KIND_PRESENTATION: Record<NodeKind, { label: string; Icon: typeof Globe }> = {
+  http: { label: 'HTTP', Icon: Globe },
+  agent: { label: 'Agent', Icon: Bot },
+  transform: { label: 'Transform', Icon: Braces },
+  condition: { label: 'Condition', Icon: GitBranch },
+  fail: { label: 'Fail', Icon: XCircle },
+  for_each: { label: 'For each', Icon: Repeat },
+  merge: { label: 'Merge', Icon: GitMerge },
+  wait: { label: 'Wait', Icon: Hourglass },
+  approval: { label: 'Approval', Icon: Hand },
+  mcp_tool: { label: 'MCP tool', Icon: Wrench }
+}
+
+export const DECISION_PRESENTATION: Record<ApprovalDecision, { label: string; className: string }> =
+  {
+    approved: { label: 'Approved', className: 'text-success' },
+    rejected: { label: 'Rejected', className: 'text-destructive' },
+    timed_out: { label: 'Timed out', className: 'text-destructive' }
+  }
+
+const WAITING_FOR_APPROVAL = { label: 'Waiting for approval', className: 'text-warning' }
+
+export interface ParkedApproval {
+  node: AutomationNode
+  iteration: number | null
+  until: number
+}
+
+/** The approval node a run is parked on, from the run's own graph; null for a wait or no park. */
+export function parkedApproval(run: AutomationRun): ParkedApproval | null {
+  if (run.parked === null) return null
+  const { node_id, iteration, until } = run.parked
+  const node = run.graph.nodes.find((candidate) => candidate.id === node_id)
+  return node?.spec.kind === 'approval' ? { node, iteration, until } : null
+}
+
+/** A run parked on an approval reads as waiting for it; its status stays `running`. */
+export function runStatusPresentation(run: AutomationRun): { label: string; className: string } {
+  return parkedApproval(run) ? WAITING_FOR_APPROVAL : STATUS_PRESENTATION[run.status]
+}
+
+const DATE_TIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+}
+const DATE_TIME = new Intl.DateTimeFormat(undefined, DATE_TIME_OPTIONS)
+const DATE_TIME_WITH_YEAR = new Intl.DateTimeFormat(undefined, {
+  ...DATE_TIME_OPTIONS,
+  year: 'numeric'
+})
+
+/**
+ * Local wall-clock time, e.g. "Mon, Oct 30, 9:00 AM", with the year when it
+ * is not the current one ("Mon, Jan 4, 2027, 9:00 AM").
+ */
+export function formatDateTime(ms: number): string {
+  const sameYear = new Date(ms).getFullYear() === new Date().getFullYear()
+  return (sameYear ? DATE_TIME : DATE_TIME_WITH_YEAR).format(ms)
+}
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return seconds % 60 ? `${minutes} min ${seconds % 60} s` : `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`
+  const days = Math.floor(hours / 24)
+  return hours % 24 ? `${days} d ${hours % 24} h` : `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+export function triggerSummary(trigger: Trigger): string {
+  if (trigger.kind === 'manual') return 'Run manually'
+  const { schedule } = trigger
+  switch (schedule.kind) {
+    case 'cron':
+      return `Cron ${schedule.expr} (${schedule.timezone})`
+    case 'every':
+      return `Every ${formatDuration(schedule.every_ms)}`
+    case 'at':
+      return `Once at ${formatDateTime(schedule.at)}`
+  }
+}
+
+function urlHost(url: string): string {
+  // A templated host stays as written; the runtime checks it against allowed_hosts.
+  if (url.includes('{{') && !/^https?:\/\/[^/{]+[/?#]?/.test(url)) return url
+  try {
+    return new URL(url.replace(/\{\{[^}]*\}\}/g, 'x')).host
+  } catch {
+    return url
+  }
+}
+
+/** The one line a diagram card shows under the label. */
+export function nodeKeyDetail(spec: NodeSpec): string {
+  switch (spec.kind) {
+    case 'http':
+      return `${spec.method} ${urlHost(spec.url)}`
+    case 'agent':
+      return spec.model ? `${spec.agent_id} · ${spec.model}` : spec.agent_id
+    case 'transform':
+      return spec.fields.map((field) => field.name).join(', ') || 'No fields'
+    case 'condition':
+      return [spec.left, spec.op, spec.right].filter(Boolean).join(' ')
+    case 'fail':
+      return spec.message
+    case 'for_each':
+      return `${spec.items} · max ${spec.max_iterations}`
+    case 'merge':
+      return spec.mode === 'all' ? 'When every branch ran' : 'When any branch ran'
+    case 'wait':
+      return `Wait ${formatDuration(spec.duration_ms)}`
+    case 'approval':
+      return spec.message
+    case 'mcp_tool':
+      return spec.tool
+  }
+}
+
+export function nodeLabels(nodes: AutomationNode[]): Map<string, string> {
+  return new Map(nodes.map((node) => [node.id, node.label]))
+}
+
+export const AGENT_TOOL_LABELS: Record<AgentTool, string> = {
+  read: 'read files',
+  search: 'search',
+  edit: 'edit files',
+  execute: 'run commands (full access)',
+  fetch: 'fetch from the network',
+  other: 'MCP and other tools'
+}
+
+/** The run policy's tool allowlist of one agent node, in words. */
+export function agentToolsLabel(tools: AgentTool[]): string {
+  return tools.length === 0
+    ? 'no tools'
+    : `tools: ${tools.map((tool) => AGENT_TOOL_LABELS[tool]).join(', ')}`
+}
+
+/** What started a run; a run keeps no copy of the trigger's settings, only this and when it was due. */
+export type FiredBy = { by: RunTrigger; at: number }
+
+export const TRIGGER_LABEL: Record<RunTrigger, string> = {
+  scheduled: 'Scheduled',
+  catch_up: 'Catch-up',
+  manual: 'Manual'
+}
+
+/** How a run's trigger card and step row read: what started it, and when it was due. */
+export function firedPresentation({ by, at }: FiredBy): {
+  Icon: typeof Zap
+  title: string
+  detail: string
+} {
+  return by === 'manual'
+    ? { Icon: Zap, title: TRIGGER_LABEL.manual, detail: 'Started by hand' }
+    : { Icon: Clock, title: TRIGGER_LABEL[by], detail: `Due ${formatDateTime(at)}` }
+}

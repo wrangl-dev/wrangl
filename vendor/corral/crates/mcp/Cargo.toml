@@ -1,0 +1,23 @@
+[package]
+name = "corral-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corral MCP server: JSON-RPC 2.0 over stdio, driving a headless engine session or a running Corral app"
+
+[lints]
+workspace = true
+
+[dependencies]
+corral-engine = { workspace = true }
+corral-collab-net = { workspace = true }
+corral-doc = { workspace = true }
+corral-geom = { workspace = true }
+corral-render = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+image = { workspace = true }

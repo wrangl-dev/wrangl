@@ -1,0 +1,804 @@
+import type { DownloadEvent } from '@tauri-apps/plugin-updater'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: vi.fn()
+}))
+
+const { mockInvoke, constructedUpdates } = vi.hoisted(() => ({
+  mockInvoke: vi.fn(),
+  constructedUpdates: [] as Array<{
+    rid: number
+    version: string
+    body?: string
+    date?: string
+    download: ReturnType<typeof vi.fn>
+    install: ReturnType<typeof vi.fn>
+  }>
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: mockInvoke
+}))
+
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn(),
+  // Mirrors the plugin's `new Update(metadata)` constructor so the signed
+  // channel path can be asserted without a Tauri runtime.
+  Update: class {
+    rid: number
+    version: string
+    body?: string
+    date?: string
+    download = vi.fn()
+    install = vi.fn()
+    constructor(metadata: { rid: number; version: string; body?: string; date?: string }) {
+      this.rid = metadata.rid
+      this.version = metadata.version
+      this.body = metadata.body
+      this.date = metadata.date
+      constructedUpdates.push(this)
+    }
+  }
+}))
+
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: vi.fn()
+}))
+
+vi.mock('../tauri-backup-api', () => ({
+  BackupErrorCodes: {
+    BACKUP_FAILED: 'BACKUP_FAILED',
+    RESTORE_FAILED: 'RESTORE_FAILED',
+    BACKUP_NOT_FOUND: 'BACKUP_NOT_FOUND',
+    DISK_SPACE_ERROR: 'DISK_SPACE_ERROR',
+    INVALID_BACKUP: 'INVALID_BACKUP'
+  },
+  createBackup: vi.fn(),
+  setAppVersion: vi.fn()
+}))
+
+vi.mock('../log-api', () => ({
+  logFrontendError: vi.fn(async () => {})
+}))
+
+vi.mock('../tauri-rollback-api', () => ({
+  keepPreviousVersion: vi.fn(),
+  setCurrentVersion: vi.fn()
+}))
+
+import { getVersion } from '@tauri-apps/api/app'
+import { relaunch } from '@tauri-apps/plugin-process'
+import { check } from '@tauri-apps/plugin-updater'
+import { logFrontendError } from '../log-api'
+import { createBackup, setAppVersion } from '../tauri-backup-api'
+import { keepPreviousVersion, setCurrentVersion } from '../tauri-rollback-api'
+import {
+  _resetUpdaterStateForTesting,
+  checkForUpdates,
+  clearPendingUpdate,
+  downloadUpdate,
+  getAutoUpdateEnabled,
+  getUpdaterState,
+  installAndRestart,
+  isUpdateAvailable,
+  isUpdateDownloaded,
+  mapTauriUpdateToInfo,
+  registerUpdateEventHandlers,
+  setAutoUpdateEnabled,
+  supportsSignedChannelUpdate
+} from '../tauri-updater-api'
+
+function createMockUpdate(version: string, body?: string, date?: string) {
+  return {
+    version,
+    body,
+    date,
+    download: vi.fn(),
+    install: vi.fn(),
+    downloadAndInstall: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined)
+  }
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+const mockFetch = vi.fn()
+
+describe('tauri-updater-api', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    _resetUpdaterStateForTesting()
+    vi.mocked(getVersion).mockResolvedValue('0.2.3')
+    vi.mocked(setAppVersion).mockResolvedValue(undefined)
+    vi.mocked(setCurrentVersion).mockResolvedValue(undefined)
+    vi.mocked(createBackup).mockResolvedValue({
+      success: true,
+      data: {
+        id: 'backup-1',
+        timestamp: '2026-03-01T00:00:00.000Z',
+        version: '0.2.3',
+        size: 1024,
+        fileCount: 4,
+        path: '/mock/backups/backup-1'
+      }
+    } as never)
+    vi.mocked(keepPreviousVersion).mockResolvedValue({
+      success: true,
+      data: {
+        version: '0.2.3',
+        path: '/mock/versions/v0.2.3',
+        size: 2048
+      }
+    } as never)
+    mockFetch.mockReset()
+    vi.stubGlobal('fetch', mockFetch)
+    mockInvoke.mockReset()
+    constructedUpdates.length = 0
+  })
+
+  describe('signed channel updates (nightly)', () => {
+    const NIGHTLY_METADATA = {
+      rid: 42,
+      currentVersion: '0.5.0-nightly.20261027.aaaaaaa',
+      version: '0.5.0-nightly.20261028.bbbbbbb',
+      date: '2026-10-27T17:46:13Z',
+      body: 'nightly notes',
+      rawJson: {}
+    }
+
+    function routeInvoke(handlers: Record<string, () => unknown>): void {
+      mockInvoke.mockImplementation(async (command: string) => {
+        const handler = handlers[command]
+        if (!handler) throw new Error(`unexpected invoke: ${command}`)
+        return handler()
+      })
+    }
+
+    it('only nightly uses the signed in-app channel flow', () => {
+      expect(supportsSignedChannelUpdate('nightly')).toBe(true)
+      expect(supportsSignedChannelUpdate('insider')).toBe(false)
+      expect(supportsSignedChannelUpdate('stable')).toBe(false)
+    })
+
+    it('checks nightly through the signed channel command, not the stable endpoint', async () => {
+      routeInvoke({ updater_check_channel: () => NIGHTLY_METADATA })
+
+      const result = await checkForUpdates('nightly')
+
+      expect(mockInvoke).toHaveBeenCalledWith('updater_check_channel', { channel: 'nightly' })
+      expect(mockInvoke).not.toHaveBeenCalledWith(
+        'updater_fetch_channel_manifest',
+        expect.anything()
+      )
+      expect(check).not.toHaveBeenCalled()
+      expect(result).toEqual({
+        version: '0.5.0-nightly.20261028.bbbbbbb',
+        releaseDate: '2026-10-27T17:46:13Z',
+        releaseNotes: 'nightly notes',
+        isSecurityUpdate: false,
+        installMode: 'in-app'
+      })
+      expect(constructedUpdates).toHaveLength(1)
+      expect(constructedUpdates[0]?.rid).toBe(42)
+
+      const state = await getUpdaterState()
+      expect(state.success && state.data.isManualUpdateMode).toBe(false)
+      expect(state.success && state.data.updateAvailable).toBe(true)
+    })
+
+    it('downloads, installs and relaunches a nightly update in-app', async () => {
+      routeInvoke({ updater_check_channel: () => NIGHTLY_METADATA })
+      vi.mocked(getVersion).mockResolvedValue('0.5.0-nightly.20261027.aaaaaaa')
+
+      await checkForUpdates('nightly')
+      const download = await downloadUpdate()
+      expect(download.success).toBe(true)
+      expect(constructedUpdates[0]?.download).toHaveBeenCalledTimes(1)
+
+      const install = await installAndRestart()
+      expect(install.success).toBe(true)
+      expect(constructedUpdates[0]?.install).toHaveBeenCalledTimes(1)
+      expect(relaunch).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports up to date when the signed nightly check finds nothing newer', async () => {
+      routeInvoke({ updater_check_channel: () => null })
+
+      await expect(checkForUpdates('nightly')).resolves.toBeNull()
+      expect(mockInvoke).not.toHaveBeenCalledWith(
+        'updater_fetch_channel_manifest',
+        expect.anything()
+      )
+      const state = await getUpdaterState()
+      expect(state.success && state.data.updateAvailable).toBe(false)
+      expect(state.success && state.data.isManualUpdateMode).toBe(false)
+    })
+
+    it('falls back to the manual nightly release page when the signed check fails', async () => {
+      routeInvoke({
+        updater_check_channel: () => {
+          throw new Error('the platform `darwin-aarch64` was not found on the response')
+        },
+        updater_fetch_channel_manifest: () => ({
+          success: true,
+          data: { version: '0.5.0-nightly.20261028.bbbbbbb', notes: 'n', platforms: {} }
+        })
+      })
+      vi.mocked(getVersion).mockResolvedValue('0.5.0-nightly.20261027.aaaaaaa')
+
+      const result = await checkForUpdates('nightly')
+
+      expect(result?.downloadUrl).toBe('https://github.com/wrangl-dev/wrangl/releases/tag/nightly')
+      expect(result?.installMode).toBe('manual')
+      const state = await getUpdaterState()
+      expect(state.success && state.data.isManualUpdateMode).toBe(true)
+    })
+
+    it.each([
+      ['a stable release', '0.6.0'],
+      ['an insider release candidate', '0.6.0-rc.1']
+    ])('never offers %s from the nightly manifest in the manual fallback', async (_label, version) => {
+      routeInvoke({
+        updater_check_channel: () => {
+          throw new Error('signature verification failed')
+        },
+        updater_fetch_channel_manifest: () => ({
+          success: true,
+          data: { version, platforms: {} }
+        })
+      })
+      vi.mocked(getVersion).mockResolvedValue('0.5.0-nightly.20261027.100.aaaaaaa')
+
+      await expect(checkForUpdates('nightly')).resolves.toBeNull()
+      const state = await getUpdaterState()
+      expect(state.success && state.data.updateAvailable).toBe(false)
+      expect(state.success && state.data.isManualUpdateMode).toBe(false)
+    })
+
+    it('keeps insider on the manual manifest path', async () => {
+      routeInvoke({
+        updater_fetch_channel_manifest: () => ({
+          success: true,
+          data: { version: '0.6.0-rc.1', platforms: {} }
+        })
+      })
+
+      const result = await checkForUpdates('insider')
+
+      expect(mockInvoke).not.toHaveBeenCalledWith('updater_check_channel', expect.anything())
+      expect(result?.downloadUrl).toBe('https://github.com/wrangl-dev/wrangl/releases/tag/insider')
+      expect(result?.installMode).toBe('manual')
+    })
+
+    it('keeps stable on the built-in signed endpoint and never asks for the nightly channel', async () => {
+      vi.mocked(check).mockResolvedValue(null)
+
+      await checkForUpdates('stable')
+
+      expect(check).toHaveBeenCalledTimes(1)
+      expect(mockInvoke).not.toHaveBeenCalledWith('updater_check_channel', expect.anything())
+    })
+  })
+
+  describe('checkForUpdates', () => {
+    it('returns null when no update is available', async () => {
+      vi.mocked(check).mockResolvedValue(null)
+
+      const result = await checkForUpdates()
+
+      expect(result).toBeNull()
+      const state = await getUpdaterState()
+      expect(state.success).toBe(true)
+      if (state.success) {
+        expect(state.data.updateAvailable).toBe(false)
+        expect(state.data.version).toBeNull()
+      }
+    })
+
+    it('returns mapped update info when update exists', async () => {
+      const update = createMockUpdate('2.0.0', 'release notes', '2026-03-01T00:00:00.000Z')
+      vi.mocked(check).mockResolvedValue(update as never)
+
+      const result = await checkForUpdates()
+
+      expect(result).toEqual({
+        version: '2.0.0',
+        releaseDate: '2026-03-01T00:00:00.000Z',
+        releaseNotes: 'release notes',
+        isSecurityUpdate: false,
+        installMode: 'in-app'
+      })
+    })
+
+    it('throws actionable error details when check fails', async () => {
+      vi.mocked(check).mockRejectedValue(new Error('network down'))
+
+      await expect(checkForUpdates()).rejects.toThrow(
+        'Failed to check for updates from https://github.com/wrangl-dev/wrangl/releases/latest/download/latest.json: network down'
+      )
+    })
+
+    it('falls back to GitHub release metadata for missing-manifest style failures', async () => {
+      vi.mocked(check).mockRejectedValue({ status: 404, url: 'latest.json' })
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          tag_name: 'v0.3.4',
+          body: 'release notes',
+          html_url: 'https://github.com/wrangl-dev/wrangl/releases/tag/v0.3.4',
+          published_at: '2026-05-01T15:13:12Z'
+        })
+      })
+
+      await expect(checkForUpdates()).resolves.toEqual({
+        version: '0.3.4',
+        releaseDate: '2026-05-01T15:13:12Z',
+        releaseNotes: 'release notes',
+        isSecurityUpdate: false,
+        downloadUrl: 'https://github.com/wrangl-dev/wrangl/releases/tag/v0.3.4',
+        installMode: 'manual'
+      })
+
+      const state = await getUpdaterState()
+      expect(state.success).toBe(true)
+      if (state.success) {
+        expect(state.data.updateAvailable).toBe(true)
+        expect(state.data.version).toBe('0.3.4')
+        expect(state.data.isManualUpdateMode).toBe(true)
+      }
+    })
+
+    it('preserves non-fallback error details when the manifest error is not eligible for GitHub fallback', async () => {
+      vi.mocked(check).mockRejectedValue({ status: 500, url: 'latest.json' })
+
+      await expect(checkForUpdates()).rejects.toThrow(
+        'Failed to check for updates from https://github.com/wrangl-dev/wrangl/releases/latest/download/latest.json: {"status":500,"url":"latest.json"}'
+      )
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('superseded update handles', () => {
+    it('closes the previous handle when a re-check replaces it', async () => {
+      const first = createMockUpdate('2.1.0')
+      const second = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValueOnce(first as never)
+      await checkForUpdates()
+      vi.mocked(check).mockResolvedValueOnce(second as never)
+      await checkForUpdates()
+      await flushPromises()
+
+      expect(first.close).toHaveBeenCalledTimes(1)
+      expect(second.close).not.toHaveBeenCalled()
+    })
+
+    it('keeps the downloaded handle open when a re-check returns the same version', async () => {
+      const first = createMockUpdate('2.1.1')
+      vi.mocked(check).mockResolvedValueOnce(first as never)
+      await checkForUpdates()
+      await downloadUpdate()
+      vi.mocked(check).mockResolvedValueOnce(createMockUpdate('2.1.1') as never)
+      await checkForUpdates()
+      await flushPromises()
+
+      expect(first.close).not.toHaveBeenCalled()
+      const state = await getUpdaterState()
+      expect(state.success && state.data.downloaded).toBe(true)
+    })
+
+    it('closes the downloaded handle once a newer version replaces it', async () => {
+      const first = createMockUpdate('2.1.2')
+      vi.mocked(check).mockResolvedValueOnce(first as never)
+      await checkForUpdates()
+      await downloadUpdate()
+      vi.mocked(check).mockResolvedValueOnce(createMockUpdate('2.1.3') as never)
+      await checkForUpdates()
+      await flushPromises()
+
+      expect(first.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not close a handle mid-download, and closes it after if it was superseded and failed', async () => {
+      const first = createMockUpdate('2.1.4')
+      let rejectDownload: (error: Error) => void = () => {}
+      vi.mocked(first.download).mockImplementation(
+        () => new Promise<void>((_resolve, reject) => (rejectDownload = reject))
+      )
+      vi.mocked(check).mockResolvedValueOnce(first as never)
+      await checkForUpdates()
+      const download = downloadUpdate()
+      await vi.waitFor(() => expect(first.download).toHaveBeenCalled())
+
+      vi.mocked(check).mockResolvedValueOnce(createMockUpdate('2.1.5') as never)
+      await checkForUpdates()
+      await flushPromises()
+      expect(first.close).not.toHaveBeenCalled()
+
+      rejectDownload(new Error('network'))
+      await download
+      await flushPromises()
+      expect(first.close).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('downloadUpdate', () => {
+    it('returns UPDATE_NOT_AVAILABLE when no pending update exists', async () => {
+      const result = await downloadUpdate()
+
+      expect(result).toEqual({
+        success: false,
+        error: 'No update available to download',
+        code: 'UPDATE_NOT_AVAILABLE'
+      })
+    })
+
+    it('reports progress and marks downloaded version on success', async () => {
+      const update = createMockUpdate('2.0.1', 'notes')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockImplementation(
+        async (onEvent?: (event: DownloadEvent) => void) => {
+          onEvent?.({ event: 'Started', data: { contentLength: 100 } })
+          onEvent?.({ event: 'Progress', data: { chunkLength: 40 } })
+          onEvent?.({ event: 'Progress', data: { chunkLength: 60 } })
+          onEvent?.({ event: 'Finished' })
+        }
+      )
+
+      const progressEvents: number[] = []
+      const result = await downloadUpdate((progress) => {
+        progressEvents.push(progress.percent)
+      })
+
+      expect(result).toEqual({ success: true, data: undefined })
+      expect(createBackup).toHaveBeenCalledTimes(1)
+      expect(keepPreviousVersion).toHaveBeenCalledWith('0.2.3')
+      // Download must not install/restart the app on its own.
+      expect(update.install).not.toHaveBeenCalled()
+      expect(vi.mocked(createBackup).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(update.download).mock.invocationCallOrder[0]
+      )
+      expect(vi.mocked(keepPreviousVersion).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(update.download).mock.invocationCallOrder[0]
+      )
+      expect(progressEvents[0]).toBe(0)
+      expect(progressEvents).toContain(40)
+      expect(progressEvents).toContain(100)
+
+      const state = await getUpdaterState()
+      expect(state.success).toBe(true)
+      if (state.success) {
+        expect(state.data.downloaded).toBe(true)
+        expect(state.data.version).toBe('2.0.1')
+      }
+    })
+
+    it('reports no progress until the pre-update backup finishes (#1431)', async () => {
+      const update = createMockUpdate('2.0.4')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      let finishBackup: (() => void) | undefined
+      vi.mocked(createBackup).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishBackup = () =>
+              resolve({
+                success: true,
+                data: {
+                  id: 'backup-2',
+                  timestamp: '2026-03-01T00:00:00.000Z',
+                  version: '0.2.3',
+                  size: 1,
+                  fileCount: 1,
+                  path: '/mock/backups/backup-2'
+                }
+              })
+          })
+      )
+
+      const progressEvents: number[] = []
+      const download = downloadUpdate((progress) => {
+        progressEvents.push(progress.percent)
+      })
+      await vi.waitFor(() => expect(finishBackup).toBeDefined())
+
+      expect(progressEvents).toEqual([])
+      expect(update.download).not.toHaveBeenCalled()
+
+      finishBackup?.()
+      await download
+
+      expect(progressEvents).toEqual([0])
+    })
+
+    it('caps the package download with a timeout so a stalled transfer fails (#1431)', async () => {
+      const update = createMockUpdate('2.0.5')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+      vi.mocked(update.download).mockRejectedValue('error sending request: operation timed out')
+
+      const result = await downloadUpdate()
+
+      expect(update.download).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 30 * 60 * 1000
+      })
+      expect(result).toEqual({
+        success: false,
+        error: 'error sending request: operation timed out',
+        code: 'DOWNLOAD_FAILED'
+      })
+      expect(logFrontendError).toHaveBeenCalledWith({
+        level: 'error',
+        source: 'tauri-updater-api',
+        message: '[updater] download failed: error sending request: operation timed out'
+      })
+    })
+
+    it('returns DOWNLOAD_FAILED when download throws', async () => {
+      const update = createMockUpdate('2.0.2')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockRejectedValue(new Error('download failed'))
+
+      const result = await downloadUpdate()
+
+      expect(result).toEqual({
+        success: false,
+        error: 'download failed',
+        code: 'DOWNLOAD_FAILED'
+      })
+    })
+
+    it('returns DISK_SPACE_INSUFFICIENT when backup preparation fails', async () => {
+      const update = createMockUpdate('2.0.3')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(createBackup).mockResolvedValue({
+        success: false,
+        error: 'disk full',
+        code: 'DISK_SPACE_ERROR'
+      } as never)
+
+      const result = await downloadUpdate()
+
+      expect(update.download).not.toHaveBeenCalled()
+      expect(keepPreviousVersion).not.toHaveBeenCalled()
+      expect(result).toEqual({
+        success: false,
+        error: 'disk full',
+        code: 'DISK_SPACE_INSUFFICIENT'
+      })
+    })
+  })
+
+  describe('installAndRestart', () => {
+    it('returns UPDATE_NOT_AVAILABLE when update not downloaded', async () => {
+      const result = await installAndRestart()
+
+      expect(result).toEqual({
+        success: false,
+        error: 'No downloaded update ready to install',
+        code: 'UPDATE_NOT_AVAILABLE'
+      })
+    })
+
+    it('installs the downloaded package then relaunches', async () => {
+      const update = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockImplementation(async () => {})
+      vi.mocked(update.install).mockResolvedValue(undefined)
+      await downloadUpdate()
+
+      vi.mocked(relaunch).mockResolvedValue(undefined)
+      const result = await installAndRestart()
+
+      expect(update.install).toHaveBeenCalledTimes(1)
+      expect(relaunch).toHaveBeenCalledTimes(1)
+      // install must run before relaunch.
+      expect(vi.mocked(update.install).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(relaunch).mock.invocationCallOrder[0]
+      )
+      expect(result).toEqual({ success: true, data: undefined })
+    })
+
+    it('returns INSTALL_FAILED when install throws', async () => {
+      const update = createMockUpdate('2.1.2')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockImplementation(async () => {})
+      await downloadUpdate()
+
+      vi.mocked(update.install).mockRejectedValue(new Error('install failed'))
+      const result = await installAndRestart()
+
+      expect(relaunch).not.toHaveBeenCalled()
+      expect(result).toEqual({
+        success: false,
+        error: 'install failed',
+        code: 'INSTALL_FAILED'
+      })
+    })
+
+    it('returns INSTALL_FAILED when relaunch throws', async () => {
+      const update = createMockUpdate('2.1.1')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockImplementation(async () => {})
+      vi.mocked(update.install).mockResolvedValue(undefined)
+      await downloadUpdate()
+
+      vi.mocked(relaunch).mockRejectedValue(new Error('relaunch failed'))
+      const result = await installAndRestart()
+
+      expect(result).toEqual({
+        success: false,
+        error: 'relaunch failed',
+        code: 'INSTALL_FAILED'
+      })
+    })
+
+    it('preserves the downloaded update across a re-check of the same version', async () => {
+      const update = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(update.download).mockImplementation(async () => {})
+      vi.mocked(update.install).mockResolvedValue(undefined)
+      await downloadUpdate()
+
+      // A periodic re-check returns the SAME version; the already-downloaded
+      // Update handle (and its bytes) must survive so install still works.
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      vi.mocked(relaunch).mockResolvedValue(undefined)
+      const result = await installAndRestart()
+
+      expect(update.install).toHaveBeenCalledTimes(1)
+      expect(relaunch).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(update.install).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(relaunch).mock.invocationCallOrder[0]
+      )
+      expect(result).toEqual({ success: true, data: undefined })
+    })
+  })
+
+  // N2: the store asks this after a re-check so a same-version re-check keeps
+  // the update ready to install instead of resetting it.
+  describe('isUpdateDownloaded', () => {
+    it('is false before anything is downloaded', async () => {
+      vi.mocked(check).mockResolvedValue(createMockUpdate('2.1.0') as never)
+      await checkForUpdates()
+
+      expect(isUpdateDownloaded('2.1.0')).toBe(false)
+    })
+
+    it('stays true across a re-check of the same version', async () => {
+      const update = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+      vi.mocked(update.download).mockImplementation(async () => {})
+      await downloadUpdate()
+
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      expect(isUpdateDownloaded('2.1.0')).toBe(true)
+    })
+
+    it('is false for a newer version that replaced the downloaded one', async () => {
+      const update = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+      vi.mocked(update.download).mockImplementation(async () => {})
+      await downloadUpdate()
+
+      vi.mocked(check).mockResolvedValue(createMockUpdate('2.2.0') as never)
+      await checkForUpdates()
+
+      expect(isUpdateDownloaded('2.2.0')).toBe(false)
+      expect(isUpdateDownloaded('2.1.0')).toBe(false)
+    })
+
+    it('is false once the pending update is cleared', async () => {
+      const update = createMockUpdate('2.1.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+      vi.mocked(update.download).mockImplementation(async () => {})
+      await downloadUpdate()
+
+      await clearPendingUpdate()
+
+      expect(isUpdateDownloaded('2.1.0')).toBe(false)
+    })
+  })
+
+  describe('state and helpers', () => {
+    it('clearPendingUpdate resets pending and downloaded state', async () => {
+      const update = createMockUpdate('2.2.0')
+      vi.mocked(check).mockResolvedValue(update as never)
+      await checkForUpdates()
+
+      await clearPendingUpdate()
+      const state = await getUpdaterState()
+
+      expect(state.success).toBe(true)
+      if (state.success) {
+        expect(state.data.updateAvailable).toBe(false)
+        expect(state.data.downloaded).toBe(false)
+        expect(state.data.version).toBeNull()
+      }
+    })
+
+    it('set/get autoUpdateEnabled round-trips value', async () => {
+      await setAutoUpdateEnabled(false)
+      const disabled = await getAutoUpdateEnabled()
+      expect(disabled).toEqual({ success: true, data: false })
+
+      await setAutoUpdateEnabled(true)
+      const enabled = await getAutoUpdateEnabled()
+      expect(enabled).toEqual({ success: true, data: true })
+    })
+
+    it('mapTauriUpdateToInfo maps body/date correctly', () => {
+      const info = mapTauriUpdateToInfo(
+        createMockUpdate('3.0.0', 'notes', '2026-03-01T12:00:00.000Z') as never
+      )
+
+      expect(info).toEqual({
+        version: '3.0.0',
+        releaseDate: '2026-03-01T12:00:00.000Z',
+        releaseNotes: 'notes',
+        isSecurityUpdate: false,
+        installMode: 'in-app'
+      })
+    })
+
+    it('isUpdateAvailable returns boolean guard semantics', () => {
+      expect(isUpdateAvailable(null)).toBe(false)
+      expect(isUpdateAvailable(createMockUpdate('1.0.0') as never)).toBe(true)
+    })
+
+    it('registerUpdateEventHandlers initializes recovery metadata and returns cleanup', async () => {
+      const cleanup = registerUpdateEventHandlers({
+        onError: vi.fn()
+      })
+
+      await flushPromises()
+
+      expect(getVersion).toHaveBeenCalledTimes(1)
+      expect(setAppVersion).toHaveBeenCalledWith('0.2.3')
+      expect(setCurrentVersion).toHaveBeenCalledWith('0.2.3')
+      expect(typeof cleanup).toBe('function')
+      expect(() => cleanup()).not.toThrow()
+    })
+
+    it('registerUpdateEventHandlers reports initialization errors via onError', async () => {
+      const onError = vi.fn()
+      vi.mocked(getVersion).mockRejectedValue(new Error('app unavailable'))
+
+      registerUpdateEventHandlers({ onError })
+      await flushPromises()
+
+      expect(onError).toHaveBeenCalledWith(
+        'Failed to initialize updater recovery metadata: app unavailable'
+      )
+    })
+  })
+})

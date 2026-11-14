@@ -1,0 +1,1404 @@
+use super::*;
+use crate::acp::session_persistence::SESSION_SCHEMA_VERSION;
+use serde_json::json;
+
+fn metadata() -> SessionMetadata {
+    SessionMetadata {
+        schema_version: SESSION_SCHEMA_VERSION,
+        storage_key: "0a0b0c0d-0e0f-4a0b-8c0d-0e0f10111213".to_string(),
+        session_id: "session-1".to_string(),
+        stable_agent_namespace: Some("config:claude".to_string()),
+        runtime_agent_id: Some("runtime-1".to_string()),
+        project_id: Some("project-1".to_string()),
+        cwd: "/work/project".to_string(),
+        title: Some("Chat title".to_string()),
+        title_source: None,
+        created_at: 100,
+        last_activity_at: 900,
+        status: PersistedSessionStatus::Active,
+        message_count: 0,
+        tool_count: 0,
+        last_seq: 0,
+        fold_open_role: None,
+        fold_counted: false,
+        discovered: false,
+        worktree_path: Some("/work/project/.wrangl/worktrees/chat/abc123".to_string()),
+        worktree_branch: Some("chat/abc123".to_string()),
+        model_id: None,
+        model_name: None,
+        worktree_branch_source: None,
+        worktree_launch_branch: None,
+        command_id: None,
+        log_epoch: None,
+        head_ahead_of_durable: false,
+        sweep_checkpoint: None,
+        continued_from: None,
+    }
+}
+
+fn record(seq: u64, type_: &str, payload: Value) -> PersistedEventRecord {
+    PersistedEventRecord {
+        schema_version: SESSION_SCHEMA_VERSION,
+        session_id: "session-1".to_string(),
+        seq,
+        type_: type_.to_string(),
+        recorded_at: 100 + seq,
+        payload,
+    }
+}
+
+fn user_prompt(seq: u64, turn_id: Option<&str>, text: &str) -> PersistedEventRecord {
+    let mut payload = json!({
+        "agentId": "runtime-1",
+        "sessionId": "session-1",
+        "content": [{"type": "text", "text": text}],
+    });
+    if let Some(turn_id) = turn_id {
+        payload["turnId"] = json!(turn_id);
+    }
+    record(seq, "user_prompt", payload)
+}
+
+fn chunk(seq: u64, role: &str, text: &str) -> PersistedEventRecord {
+    record(
+        seq,
+        "message_chunk",
+        json!({
+            "agentId": "runtime-1",
+            "sessionId": "session-1",
+            "role": role,
+            "content": {"type": "text", "text": text},
+        }),
+    )
+}
+
+fn tool_call(seq: u64) -> PersistedEventRecord {
+    record(
+        seq,
+        "tool_call",
+        json!({
+            "agentId": "runtime-1",
+            "sessionId": "session-1",
+            "toolCall": {"toolCallId": "t-1", "kind": "execute", "status": "completed"},
+        }),
+    )
+}
+
+fn tool_call_update(seq: u64) -> PersistedEventRecord {
+    record(
+        seq,
+        "tool_call_update",
+        json!({
+            "agentId": "runtime-1",
+            "sessionId": "session-1",
+            "update": {"toolCallId": "t-1", "status": "completed"},
+        }),
+    )
+}
+
+fn prompt_complete(seq: u64, turn_id: &str) -> PersistedEventRecord {
+    record(
+        seq,
+        "prompt_complete",
+        json!({"sessionId": "session-1", "turnId": turn_id, "stopReason": "end_turn"}),
+    )
+}
+
+#[test]
+fn full_transcript_folds_into_renderer_bubbles() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hello"),
+        chunk(2, "agent", "Hel"),
+        chunk(3, "agent", "lo "),
+        chunk(4, "thought", "thinking…"),
+        tool_call(5),
+        chunk(6, "agent", "world"),
+        tool_call_update(7),
+        chunk(8, "agent", "!"),
+        prompt_complete(9, "turn-1"),
+        user_prompt(10, Some("turn-2"), "next"),
+        chunk(11, "agent", "reply"),
+        prompt_complete(12, "turn-2"),
+    ];
+    let mut meta = metadata();
+    meta.last_seq = 12;
+    let payload = materialize_session_payload(&meta, &records);
+
+    let ids: Vec<&str> = payload
+        .messages
+        .iter()
+        .map(|message| message.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            "turn:turn-1",
+            "snapshot:agent:2",
+            "snapshot:thought:4",
+            // tool_call at seq 5 splits; tool_call_update at 7 does NOT.
+            "snapshot:agent:6",
+            "turn:turn-2",
+            "snapshot:agent:11",
+        ]
+    );
+    let seqs: Vec<u64> = payload.messages.iter().map(|message| message.seq).collect();
+    assert_eq!(seqs, vec![1, 2, 4, 6, 10, 11]);
+    let timestamps: Vec<u64> = payload
+        .messages
+        .iter()
+        .map(|message| message.timestamp)
+        .collect();
+    assert_eq!(timestamps, vec![101, 102, 104, 106, 110, 111]);
+    // Text coalescing within a run (appendBlocks semantics).
+    assert_eq!(
+        payload.messages[1].blocks,
+        vec![json!({"type":"text","text":"Hello "})]
+    );
+    assert_eq!(
+        payload.messages[3].blocks,
+        vec![json!({"type":"text","text":"world!"})]
+    );
+    assert_eq!(payload.messages[1].role, "agent");
+    assert_eq!(payload.messages[2].role, "thought");
+    assert!(payload.messages.iter().all(|message| !message.streaming));
+    assert_eq!(payload.metadata.message_count, 6);
+    assert_eq!(payload.metadata.last_seq, 12);
+}
+
+#[test]
+fn metadata_maps_agent_config_prefix_and_fallbacks() {
+    let meta = metadata();
+    let payload = materialize_session_payload(&meta, &[]);
+    assert_eq!(
+        serde_json::to_value(&payload.metadata).unwrap(),
+        json!({
+            "id": "session-1",
+            "agentId": "runtime-1",
+            "agentConfigId": "claude",
+            "title": "Chat title",
+            "cwd": "/work/project",
+            "projectId": "project-1",
+            "createdAt": 100,
+            "lastActivityAt": 900,
+            "messageCount": 0,
+            "lastSeq": 0,
+            "status": "active",
+            // Issue #1192: an empty log has no open turn, said explicitly.
+            "turnActive": false,
+            "worktreePath": "/work/project/.wrangl/worktrees/chat/abc123",
+            "worktreeBranch": "chat/abc123",
+        })
+    );
+}
+
+#[test]
+fn metadata_carries_the_log_epoch_when_the_session_has_one() {
+    let mut meta = metadata();
+    meta.log_epoch = Some("epoch-7".to_string());
+    let value = serde_json::to_value(materialize_session_payload(&meta, &[]).metadata).unwrap();
+    assert_eq!(value["logEpoch"], "epoch-7");
+
+    meta.log_epoch = None;
+    let value = serde_json::to_value(materialize_session_payload(&meta, &[]).metadata).unwrap();
+    assert!(
+        value.get("logEpoch").is_none(),
+        "absent, never null: {value}"
+    );
+}
+
+#[test]
+fn metadata_omits_agent_config_id_without_config_prefix() {
+    let mut meta = metadata();
+    meta.stable_agent_namespace = Some("opaque-namespace".to_string());
+    let payload = materialize_session_payload(&meta, &[]);
+    let value = serde_json::to_value(&payload.metadata).unwrap();
+    assert!(
+        value.get("agentConfigId").is_none(),
+        "agentConfigId must be omitted, not null: {value}"
+    );
+}
+
+#[test]
+fn metadata_falls_back_for_missing_optional_fields() {
+    let mut meta = metadata();
+    meta.stable_agent_namespace = None;
+    meta.runtime_agent_id = None;
+    meta.project_id = None;
+    meta.title = None;
+    meta.status = PersistedSessionStatus::Error;
+    let payload = materialize_session_payload(&meta, &[]);
+    assert_eq!(payload.metadata.agent_id, "");
+    assert_eq!(payload.metadata.agent_config_id, None);
+    assert_eq!(payload.metadata.project_id, "");
+    assert_eq!(payload.metadata.title, "Untitled Chat");
+    assert_eq!(payload.metadata.status, PersistedSessionStatus::Error);
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(value["metadata"]["status"], "error");
+}
+
+#[test]
+fn user_prompt_without_turn_id_falls_back_to_seq_id() {
+    let records = vec![user_prompt(3, None, "no turn id")];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.messages[0].id, "user:seq-3");
+    assert_eq!(payload.messages[0].role, "user");
+    assert_eq!(payload.messages[0].seq, 3);
+}
+
+#[test]
+fn user_prompt_with_empty_turn_id_falls_back_to_seq_id() {
+    let records = vec![user_prompt(5, Some(""), "empty turn id")];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages[0].id, "user:seq-5");
+}
+
+#[test]
+fn user_prompt_strips_handoff_preamble_from_legacy_records() {
+    // spec-agent-switch-separator-redesign: pre-fix handoff prompts
+    // persisted `summary + --- + draft` as the user bubble; materialize
+    // must show only the draft so the wire framing never replays.
+    let wire = "# Conversation handoff\n\nYou are taking over a conversation previously handled by OMP.\n\nUser: hi\nAgent: hello\n\n---\n\ncontinue the work";
+    let records = vec![user_prompt(7, Some("turn-7"), wire)];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    let msg = &payload.messages[0];
+    assert_eq!(msg.role, "user");
+    let text = msg.blocks[0]
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert_eq!(text, "continue the work");
+    assert!(!text.contains("# Conversation handoff"));
+}
+
+#[test]
+fn user_prompt_folds_summary_only_handoff_to_boundary_row() {
+    // A summary-only switch persisted the summary with no draft — the
+    // record folds to a boundary row (no blocks, handoff_boundary=true):
+    // never renders, but keeps the switch turn's reply visible.
+    let summary_only = "# Conversation handoff\n\nYou are taking over a conversation previously handled by OMP.\n\nUser: hi\nAgent: hello";
+    let records = vec![user_prompt(8, Some("turn-8"), summary_only)];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    let msg = &payload.messages[0];
+    assert_eq!(msg.role, "user");
+    assert!(msg.blocks.is_empty());
+    assert!(msg.handoff_boundary);
+}
+
+#[test]
+fn user_prompt_with_handoff_like_text_replays_verbatim() {
+    // Exact-prefix gate: text merely BEGINNING with the header line is
+    // user-authored, not wire framing — never strip or drop it.
+    let records = vec![user_prompt(
+        6,
+        Some("turn-6"),
+        "# Conversation handoff! my notes",
+    )];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let text = payload.messages[0].blocks[0]
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert_eq!(text, "# Conversation handoff! my notes");
+}
+
+#[test]
+fn user_prompt_without_handoff_header_replays_verbatim() {
+    // Non-handoff text never touched, even when it contains '---'.
+    let records = vec![user_prompt(9, Some("turn-9"), "check this --- divider")];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let text = payload.messages[0].blocks[0]
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert_eq!(text, "check this --- divider");
+}
+
+#[test]
+fn role_change_splits_chunk_runs() {
+    let records = vec![
+        chunk(1, "agent", "a"),
+        chunk(2, "thought", "t"),
+        chunk(3, "agent", "b"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(
+        payload
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["snapshot:agent:1", "snapshot:thought:2", "snapshot:agent:3"]
+    );
+}
+
+#[test]
+fn prompt_complete_splits_consecutive_agent_runs() {
+    let records = vec![
+        chunk(1, "agent", "first"),
+        prompt_complete(2, "turn-1"),
+        chunk(3, "agent", "second"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 2);
+    assert_eq!(payload.messages[0].id, "snapshot:agent:1");
+    assert_eq!(payload.messages[1].id, "snapshot:agent:3");
+}
+
+#[test]
+fn tool_call_update_never_splits_the_open_run() {
+    let records = vec![
+        chunk(1, "agent", "a"),
+        tool_call_update(2),
+        chunk(3, "agent", "b"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.messages[0].id, "snapshot:agent:1");
+    assert_eq!(payload.messages[0].seq, 1);
+    assert_eq!(
+        payload.messages[0].blocks,
+        vec![json!({"type":"text","text":"ab"})]
+    );
+}
+
+#[test]
+fn non_text_blocks_append_without_coalescing() {
+    let records = vec![
+        record(
+            1,
+            "message_chunk",
+            json!({"role":"agent","content":{"type":"text","text":"a"}}),
+        ),
+        record(
+            2,
+            "message_chunk",
+            json!({"role":"agent","content":{"type":"resource","resource":{"uri":"file:///x"}}}),
+        ),
+        record(
+            3,
+            "message_chunk",
+            json!({"role":"agent","content":{"type":"text","text":"b"}}),
+        ),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(
+        payload.messages[0].blocks,
+        vec![
+            json!({"type":"text","text":"a"}),
+            json!({"type":"resource","resource":{"uri":"file:///x"}}),
+            json!({"type":"text","text":"b"}),
+        ]
+    );
+}
+
+#[test]
+fn chunks_without_content_are_skipped() {
+    let records = vec![
+        record(1, "message_chunk", json!({"role":"agent"})),
+        record(
+            2,
+            "message_chunk",
+            json!({"role":"agent","content":Value::Null}),
+        ),
+        chunk(3, "agent", "real"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.messages[0].id, "snapshot:agent:3");
+}
+
+#[test]
+fn empty_text_chunk_never_opens_a_bubble() {
+    let records = vec![
+        record(
+            1,
+            "message_chunk",
+            json!({"role":"agent","content":{"type":"text","text":""}}),
+        ),
+        chunk(2, "agent", "content"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.messages[0].id, "snapshot:agent:2");
+}
+
+#[test]
+fn empty_registered_session_yields_empty_messages() {
+    let payload = materialize_session_payload(&metadata(), &[]);
+    assert!(payload.messages.is_empty());
+    assert_eq!(payload.metadata.id, "session-1");
+    assert_eq!(payload.metadata.message_count, 0);
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(value["messages"], json!([]));
+}
+
+#[test]
+fn double_materialization_is_identical() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hi"),
+        chunk(2, "agent", "a"),
+        tool_call(3),
+        chunk(4, "agent", "b"),
+        prompt_complete(5, "turn-1"),
+        user_prompt(6, None, "again"),
+        chunk(7, "thought", "hmm"),
+    ];
+    let mut meta = metadata();
+    meta.last_seq = 7;
+    let first = serde_json::to_value(materialize_session_payload(&meta, &records)).unwrap();
+    let second = serde_json::to_value(materialize_session_payload(&meta, &records)).unwrap();
+    assert_eq!(first, second, "materialization must be deterministic");
+}
+
+#[test]
+fn materialized_payload_preserves_worktree_binding() {
+    // CAP-4/6: the worktree path + branch must survive materialization
+    // so history reopen and post-reload resume reattach to the bound
+    // worktree (not the project root) and the indicator can render.
+    let payload = materialize_session_payload(&metadata(), &[]);
+    assert_eq!(
+        payload.metadata.worktree_path.as_deref(),
+        Some("/work/project/.wrangl/worktrees/chat/abc123")
+    );
+    assert_eq!(
+        payload.metadata.worktree_branch.as_deref(),
+        Some("chat/abc123")
+    );
+}
+
+fn agent_switch(seq: u64) -> PersistedEventRecord {
+    record(
+        seq,
+        "agent_switch",
+        json!({
+            "sessionId": "session-1",
+            "fromConfigId": "omp",
+            "toConfigId": "claude",
+            "newSessionId": "session-2",
+            "summaryText": "Handoff summary",
+        }),
+    )
+}
+
+#[test]
+fn agent_switch_folds_into_switches_array_with_full_identity() {
+    let records = vec![user_prompt(1, Some("turn-1"), "hello"), agent_switch(2)];
+    let mut meta = metadata();
+    meta.last_seq = 2;
+    let payload = materialize_session_payload(&meta, &records);
+    // The marker is a sibling of `messages`, never a ChatMessage.
+    assert_eq!(payload.messages.len(), 1);
+    assert_eq!(payload.switches.len(), 1);
+    let switch = &payload.switches[0];
+    assert_eq!(switch.id, "switch:seq-2");
+    assert_eq!(switch.from_config_id, "omp");
+    assert_eq!(switch.to_config_id, "claude");
+    assert_eq!(switch.new_session_id, "session-2");
+    assert_eq!(switch.summary_text, "Handoff summary");
+    assert_eq!(switch.seq, 2);
+    assert_eq!(switch.timestamp, 102);
+    // The wire shape is camelCase with a stable id key.
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(value["switches"][0]["id"], "switch:seq-2");
+    assert_eq!(value["switches"][0]["fromConfigId"], "omp");
+    assert_eq!(value["switches"][0]["toConfigId"], "claude");
+    assert_eq!(value["switches"][0]["newSessionId"], "session-2");
+    assert_eq!(value["switches"][0]["summaryText"], "Handoff summary");
+    assert_eq!(value["switches"][0]["seq"], 2);
+    // Switches are not messages: the count reflects bubbles only.
+    assert_eq!(payload.metadata.message_count, 1);
+    assert_eq!(payload.metadata.last_seq, 2);
+}
+
+#[test]
+fn agent_switch_splits_open_chunk_run_into_fresh_bubble() {
+    // Chunks 2+3 coalesce; the switch at 4 splits; the next agent's
+    // chunk at 5 opens a FRESH bubble (never coalesced into the old
+    // agent's run).
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hi"),
+        chunk(2, "agent", "Hel"),
+        chunk(3, "agent", "lo"),
+        agent_switch(4),
+        chunk(5, "agent", "New agent reply"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let ids: Vec<&str> = payload
+        .messages
+        .iter()
+        .map(|message| message.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["turn:turn-1", "snapshot:agent:2", "snapshot:agent:5"]
+    );
+    // Coalescing still holds within each run.
+    assert_eq!(
+        payload.messages[1].blocks,
+        vec![json!({"type":"text","text":"Hello"})]
+    );
+    assert_eq!(payload.messages[2].blocks[0]["text"], "New agent reply");
+    assert_eq!(payload.switches.len(), 1);
+    assert_eq!(payload.switches[0].seq, 4);
+}
+
+#[test]
+fn agent_switch_absent_yields_empty_switches() {
+    // Pre-feature payloads: no `agent_switch` records → empty array,
+    // rendering unchanged.
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hello"),
+        chunk(2, "agent", "hi"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert!(payload.switches.is_empty());
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(value["switches"], json!([]));
+}
+
+#[test]
+fn corrupt_agent_switch_record_degrades_never_panics() {
+    // Missing `newSessionId` (and missing summary) must degrade to
+    // empty strings, not panic or fail the fold.
+    let records = vec![record(
+        3,
+        "agent_switch",
+        json!({"sessionId": "session-1", "fromConfigId": "omp", "toConfigId": "claude"}),
+    )];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.switches.len(), 1);
+    let switch = &payload.switches[0];
+    assert_eq!(switch.new_session_id, "");
+    assert_eq!(switch.summary_text, "");
+    assert_eq!(switch.from_config_id, "omp");
+    assert_eq!(switch.seq, 3);
+}
+
+#[test]
+fn multiple_switches_stay_in_seq_order() {
+    let records = vec![
+        agent_switch(2),
+        agent_switch(5),
+        agent_switch(8),
+        user_prompt(9, Some("turn-9"), "after"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let seqs: Vec<u64> = payload.switches.iter().map(|s| s.seq).collect();
+    assert_eq!(seqs, vec![2, 5, 8]);
+    let ids: Vec<&str> = payload.switches.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, vec!["switch:seq-2", "switch:seq-5", "switch:seq-8"]);
+}
+
+#[test]
+fn switch_materialization_is_deterministic() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hi"),
+        chunk(2, "agent", "a"),
+        agent_switch(3),
+        chunk(4, "agent", "b"),
+        user_prompt(5, Some("turn-2"), "next"),
+    ];
+    let mut meta = metadata();
+    meta.last_seq = 5;
+    let first = serde_json::to_value(materialize_session_payload(&meta, &records)).unwrap();
+    let second = serde_json::to_value(materialize_session_payload(&meta, &records)).unwrap();
+    assert_eq!(
+        first, second,
+        "switch materialization must be deterministic"
+    );
+}
+
+// --- turn_active derivation: only the LAST prompt can be open ---------------
+
+#[test]
+fn superseded_unmatched_prompt_does_not_hold_turn_active() {
+    // confirmed-hour regression: an abandoned turn (its agent died mid-turn)
+    // left an unmatched `user_prompt` at seq 3; a newer prompt under a new
+    // owner ran and completed. The dead turn can never emit `prompt_complete`
+    // — the open-turn scan must not resurrect it.
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "done"),
+        prompt_complete(2, "turn-1"),
+        user_prompt(3, Some("turn-dead"), "orphaned"),
+        chunk(4, "agent", "partial"),
+        user_prompt(5, Some("turn-2"), "new owner prompt"),
+        chunk(6, "agent", "reply"),
+        prompt_complete(7, "turn-2"),
+    ];
+    assert_eq!(open_turn_from_records(&records), None);
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.metadata.turn_active, Some(false));
+}
+
+#[test]
+fn latest_unmatched_prompt_is_the_open_turn() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "first"),
+        prompt_complete(2, "turn-1"),
+        user_prompt(3, Some("turn-2"), "running"),
+        chunk(4, "agent", "partial"),
+    ];
+    assert_eq!(open_turn_from_records(&records).as_deref(), Some("turn-2"));
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.metadata.turn_active, Some(true));
+}
+
+#[test]
+fn stale_completion_for_other_turn_does_not_close_latest_prompt() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "running"),
+        prompt_complete(2, "turn-other"),
+    ];
+    assert_eq!(open_turn_from_records(&records).as_deref(), Some("turn-1"));
+}
+
+#[test]
+fn trailing_prompt_without_turn_id_is_not_a_named_open_turn() {
+    // A turn-id-less prompt (pre-1.8 record) is open but unnameable — the
+    // client derives it from the transcript tail, so the payload must not
+    // reach past it to an older unmatched turn.
+    let records = vec![
+        user_prompt(1, Some("turn-dead"), "orphaned"),
+        user_prompt(2, None, "legacy tail"),
+    ];
+    assert_eq!(open_turn_from_records(&records), None);
+}
+
+#[test]
+fn all_completed_prompts_yield_no_open_turn() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "one"),
+        prompt_complete(2, "turn-1"),
+        user_prompt(3, Some("turn-2"), "two"),
+        prompt_complete(4, "turn-2"),
+    ];
+    assert_eq!(open_turn_from_records(&records), None);
+}
+
+/// ACPM-F1: a host terminator (`error` / `timeout` / `crashed`
+/// `prompt_complete`, matched by turn id) closes the turn exactly like an ACP
+/// stop reason — reopening shows no open turn and the session is not busy.
+#[test]
+fn host_terminators_close_the_open_turn_on_reopen() {
+    for stop_reason in ["error", "timeout", "crashed"] {
+        let records = vec![
+            user_prompt(1, Some("turn-1"), "ran into trouble"),
+            chunk(2, "agent", "partial"),
+            record(
+                3,
+                "prompt_complete",
+                json!({"sessionId": "session-1", "turnId": "turn-1", "stopReason": stop_reason}),
+            ),
+        ];
+        assert_eq!(open_turn_from_records(&records), None, "{stop_reason}");
+        let payload = materialize_session_payload(&metadata(), &records);
+        assert_eq!(payload.metadata.turn_active, Some(false), "{stop_reason}");
+        // Without the terminator the same log IS open (the pre-fix state).
+        assert_eq!(
+            open_turn_from_records(&records[..2]).as_deref(),
+            Some("turn-1")
+        );
+    }
+}
+
+#[test]
+fn null_turn_id_prompt_is_unnameable_not_uncloseable() {
+    // Producers serialize `Option<String>` inside `json!`, so a client that
+    // omits `turnId` persists `"turnId": null` (not an absent key). Null must
+    // behave like absent: an open-but-unnameable turn, never a named turn a
+    // `prompt_complete` cannot match.
+    let records = vec![
+        user_prompt(1, Some("turn-dead"), "orphaned"),
+        record(
+            2,
+            "user_prompt",
+            json!({"agentId":"runtime-1","sessionId":"session-1","turnId":null,"content":[]}),
+        ),
+    ];
+    assert_eq!(open_turn_from_records(&records), None);
+}
+
+#[test]
+fn agent_switch_closes_abandoned_open_turn() {
+    // Ownership moved to a new session — the pending turn can never emit
+    // `prompt_complete`; the switch is its terminal boundary.
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "running"),
+        chunk(2, "agent", "partial"),
+        agent_switch(3),
+    ];
+    assert_eq!(open_turn_from_records(&records), None);
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert_eq!(payload.metadata.turn_active, Some(false));
+}
+
+#[test]
+fn closed_status_never_reports_turn_active() {
+    // `finalize_session(Closed)` mid-turn writes no terminal record, so the
+    // last prompt stays unmatched — but a closed session cannot have a live
+    // turn; the metadata must not contradict itself.
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "orphaned by close"),
+        chunk(2, "agent", "partial"),
+    ];
+    assert_eq!(open_turn_from_records(&records).as_deref(), Some("turn-1"));
+    let mut meta = metadata();
+    meta.status = PersistedSessionStatus::Closed;
+    let payload = materialize_session_payload(&meta, &records);
+    assert_eq!(payload.metadata.turn_active, Some(false));
+}
+
+fn tool_record(seq: u64, type_: &str, tool: Value) -> PersistedEventRecord {
+    let key = if type_ == "tool_call" {
+        "toolCall"
+    } else {
+        "update"
+    };
+    record(
+        seq,
+        type_,
+        json!({"agentId": "runtime-1", "sessionId": "session-1", key: tool}),
+    )
+}
+
+#[test]
+fn tool_call_summaries_fold_latest_field_wins_with_first_seq() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "edit"),
+        // UPDATE_DIFF: the call carries the path, the update the counts.
+        tool_record(
+            2,
+            "tool_call",
+            json!({"toolCallId": "e1", "kind": "edit", "status": "pending",
+                "locations": [{"path": "/w/a.ts"}]}),
+        ),
+        chunk(3, "agent", "working"),
+        tool_record(
+            4,
+            "tool_call_update",
+            json!({"toolCallId": "e1", "status": "completed",
+                "locations": [{"path": "/w/a.ts"}], "diffStat": {"added": 3, "removed": 1}}),
+        ),
+        // A later update without the summary fields keeps the earlier ones.
+        tool_record(
+            5,
+            "tool_call_update",
+            json!({"toolCallId": "e1", "status": "failed"}),
+        ),
+        // REFRESH: a second edit on the same file stays its own summary (the
+        // panel aggregates per path).
+        tool_record(
+            6,
+            "tool_call",
+            json!({"toolCallId": "e2", "kind": "edit", "status": "completed",
+                "locations": [{"path": "/w/a.ts"}], "diffStat": {"added": 2, "removed": 0}}),
+        ),
+        // READ_CALL: never a summary.
+        tool_record(
+            7,
+            "tool_call",
+            json!({"toolCallId": "r1", "kind": "read", "locations": [{"path": "/w/a.ts"}]}),
+        ),
+        // LEGACY: an edit without summary fields yields nothing.
+        tool_record(
+            8,
+            "tool_call",
+            json!({"toolCallId": "old", "kind": "edit", "status": "completed"}),
+        ),
+        // An update for an unknown id is dropped (renderer recovery parity).
+        tool_record(
+            9,
+            "tool_call_update",
+            json!({"toolCallId": "ghost", "kind": "edit",
+                "locations": [{"path": "/w/ghost.ts"}]}),
+        ),
+        // A call re-kinded by a later update follows the latest kind.
+        tool_record(
+            10,
+            "tool_call",
+            json!({"toolCallId": "m1", "kind": "other", "locations": [{"path": "/w/m.ts"}]}),
+        ),
+        tool_record(
+            11,
+            "tool_call_update",
+            json!({"toolCallId": "m1", "kind": "move", "locations": [{"path": "/w/n.ts"}]}),
+        ),
+        prompt_complete(12, "turn-1"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(
+        value["toolCalls"],
+        json!([
+            {"toolCallId": "e1", "kind": "edit", "status": "failed",
+                "locations": [{"path": "/w/a.ts"}], "diffStat": {"added": 3, "removed": 1},
+                "seq": 2, "timestamp": 102, "restoredSummary": true},
+            {"toolCallId": "e2", "kind": "edit", "status": "completed",
+                "locations": [{"path": "/w/a.ts"}], "diffStat": {"added": 2, "removed": 0},
+                "seq": 6, "timestamp": 106, "restoredSummary": true},
+            {"toolCallId": "m1", "kind": "move",
+                "locations": [{"path": "/w/n.ts"}],
+                "seq": 10, "timestamp": 110, "restoredSummary": true},
+        ])
+    );
+    // The message fold is untouched by the summaries.
+    let ids: Vec<&str> = payload.messages.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["turn:turn-1", "snapshot:agent:3"]);
+}
+
+#[test]
+fn subagent_dispatches_restore_as_cards_with_their_latest_record() {
+    let running = json!({"id": "child-1", "activity": "running", "title": "Review"});
+    let idle = json!({"id": "child-1", "activity": "idle",
+        "end": {"reason": "completed"}, "title": "Review"});
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "review"),
+        tool_record(
+            2,
+            "tool_call",
+            json!({"toolCallId": "d1", "kind": "think", "status": "in_progress",
+                "_meta": {"wrangl/subagent": running}}),
+        ),
+        // A child call: restored under d1 for the subagent panel.
+        tool_record(
+            3,
+            "tool_call",
+            json!({"toolCallId": "c1", "kind": "read", "title": "Read src/a.ts",
+                "locations": [{"path": "src/a.ts"}],
+                "_meta": {"claudeCode": {"parentToolUseId": "d1"}}}),
+        ),
+        tool_record(
+            4,
+            "tool_call_update",
+            json!({"toolCallId": "d1", "status": "completed",
+                "_meta": {"wrangl/subagent": idle}}),
+        ),
+        // A nested dispatch keeps its parent dispatch id.
+        tool_record(
+            5,
+            "tool_call",
+            json!({"toolCallId": "d2", "_meta": {"wrangl/subagent": running,
+                "claudeCode": {"parentToolUseId": "d1"}}}),
+        ),
+        // A call that only steers subagents is not a card.
+        tool_record(
+            6,
+            "tool_call",
+            json!({"toolCallId": "w1", "kind": "other",
+                "_meta": {"wrangl/subagentControl": {"subagentIds": ["child-1"]}}}),
+        ),
+        prompt_complete(7, "turn-1"),
+    ];
+    let value = serde_json::to_value(materialize_session_payload(&metadata(), &records)).unwrap();
+    assert_eq!(
+        value["toolCalls"],
+        json!([
+            {"toolCallId": "d1", "kind": "think", "status": "completed",
+                "seq": 2, "timestamp": 102,
+                "_meta": {"wrangl/subagent": idle}, "restoredSummary": false},
+            {"toolCallId": "c1", "kind": "read", "locations": [{"path": "src/a.ts"}],
+                "title": "Read src/a.ts", "seq": 3, "timestamp": 103,
+                "_meta": {"claudeCode": {"parentToolUseId": "d1"}}, "restoredSummary": false},
+            {"toolCallId": "d2", "kind": "think", "seq": 5, "timestamp": 105,
+                "_meta": {"wrangl/subagent": running,
+                    "claudeCode": {"parentToolUseId": "d1"}},
+                "restoredSummary": false},
+        ])
+    );
+}
+
+fn subagent_chunk(seq: u64, parent: &str, role: &str, text: &str) -> PersistedEventRecord {
+    let mut chunk = chunk(seq, role, text);
+    chunk.payload["parentToolCallId"] = json!(parent);
+    chunk
+}
+
+#[test]
+fn a_restored_dispatch_carries_its_result_and_its_subagents_text() {
+    let record = json!({"id": "child-1", "activity": "idle", "end": {"reason": "completed"}});
+    let result = json!([{"type": "content", "content": {"type": "text", "text": "All clear."}}]);
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "review"),
+        tool_record(
+            2,
+            "tool_call",
+            json!({"toolCallId": "d1", "kind": "think", "_meta": {"wrangl/subagent": record}}),
+        ),
+        subagent_chunk(3, "d1", "agent", "Checked a. "),
+        subagent_chunk(4, "d1", "thought", "hmm"),
+        subagent_chunk(5, "unknown", "agent", "lost"),
+        subagent_chunk(6, "d1", "agent", "Checked b."),
+        tool_record(
+            7,
+            "tool_call_update",
+            json!({"toolCallId": "d1", "status": "completed", "content": result,
+                "_meta": {"wrangl/subagent": record}}),
+        ),
+        prompt_complete(8, "turn-1"),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    let value = serde_json::to_value(&payload).unwrap();
+    assert_eq!(
+        value["toolCalls"][0]["subagentText"],
+        json!("Checked a. Checked b.")
+    );
+    assert_eq!(value["toolCalls"][0]["content"], result);
+    assert_eq!(
+        payload.messages.len(),
+        1,
+        "subagent text never joins the main reply"
+    );
+}
+
+#[test]
+fn a_restored_subagent_keeps_only_its_newest_text_and_calls() {
+    let record = json!({"id": "child-1", "activity": "running"});
+    let mut records = vec![tool_record(
+        1,
+        "tool_call",
+        json!({"toolCallId": "d1", "_meta": {"wrangl/subagent": record}}),
+    )];
+    let mut seq = 1;
+    for step in 0..(MAX_RESTORED_CHILD_CALLS + 5) {
+        seq += 1;
+        records.push(tool_record(
+            seq,
+            "tool_call",
+            json!({"toolCallId": format!("c{step}"),
+                "kind": if step == 0 { "edit" } else { "read" },
+                "locations": [{"path": format!("src/{step}.ts")}],
+                "_meta": {"claudeCode": {"parentToolUseId": "d1"}}}),
+        ));
+    }
+    let long = "é".repeat(MAX_DURABLE_SUBAGENT_TEXT_CHARS);
+    for text in [long.as_str(), "end"] {
+        seq += 1;
+        records.push(subagent_chunk(seq, "d1", "agent", text));
+    }
+    // A call whose parent is not a restored dispatch stays out.
+    seq += 1;
+    records.push(tool_record(
+        seq,
+        "tool_call",
+        json!({"toolCallId": "stray", "kind": "read",
+            "_meta": {"claudeCode": {"parentToolUseId": "nobody"}}}),
+    ));
+    let calls = fold_tool_call_summaries(&records);
+    let ids: Vec<&str> = calls
+        .iter()
+        .map(|call| call.tool_call_id.as_str())
+        .collect();
+    assert_eq!(ids.len(), 2 + MAX_RESTORED_CHILD_CALLS);
+    assert_eq!(
+        ids[1], "c0",
+        "an edit past the cap stays a file-change summary"
+    );
+    assert!(calls[1].restored_summary);
+    assert_eq!(ids[2], "c5", "the oldest calls go first");
+    assert!(!ids.contains(&"stray"));
+    let text = calls[0].subagent_text.as_deref().unwrap();
+    assert_eq!(text.chars().count(), MAX_DURABLE_SUBAGENT_TEXT_CHARS);
+    assert!(text.ends_with("éend"));
+}
+
+#[test]
+fn tool_call_summaries_skip_malformed_fields_and_always_serialize() {
+    let records = vec![
+        tool_record(
+            1,
+            "tool_call",
+            json!({"toolCallId": "e1", "kind": "edit",
+                "locations": [{"path": ""}, {"line": 3}, "bogus"],
+                "diffStat": {"added": -1, "removed": 2}}),
+        ),
+        tool_record(2, "tool_call", json!({"kind": "edit"})),
+        record(3, "tool_call", json!({"toolCall": "not-an-object"})),
+    ];
+    let payload = materialize_session_payload(&metadata(), &records);
+    assert!(payload.tool_calls.is_empty());
+    // Absent summaries still serialize as `[]` (byte-identical shape on
+    // both transports).
+    let empty = serde_json::to_value(materialize_session_payload(&metadata(), &[])).unwrap();
+    assert_eq!(empty["toolCalls"], json!([]));
+}
+
+#[test]
+fn payload_omits_commands_when_the_log_has_no_command_list() {
+    let payload = materialize_session_payload(&metadata(), &[user_prompt(1, Some("t1"), "hi")]);
+    assert!(serde_json::to_value(&payload)
+        .unwrap()
+        .as_object()
+        .is_some_and(|object| !object.contains_key("commands")));
+}
+
+#[test]
+fn payload_reports_the_seq_of_the_last_command_list_record() {
+    let records = vec![
+        record(
+            1,
+            "commands_update",
+            json!({"availableCommands": [{"name": "init"}]}),
+        ),
+        user_prompt(2, Some("t1"), "hi"),
+        record(
+            3,
+            "commands_update",
+            json!({"availableCommands": [{"name": "review"}]}),
+        ),
+        user_prompt(4, Some("t2"), "again"),
+    ];
+    let payload = serde_json::to_value(materialize_session_payload(&metadata(), &records)).unwrap();
+    assert_eq!(payload["commands"], json!([{"name": "review"}]));
+    assert_eq!(payload["commandsSeq"], json!(3));
+}
+
+// --- issue #1192: the payload says explicitly when no turn is running --------
+
+/// The wire value of `metadata.turnActive` for `records`, or `None` when the
+/// key is absent from the serialized payload.
+fn wire_turn_active(records: &[PersistedEventRecord]) -> Option<Value> {
+    let payload = materialize_session_payload(&metadata(), records);
+    let value = serde_json::to_value(&payload.metadata).expect("metadata serializes");
+    value.get("turnActive").cloned()
+}
+
+#[test]
+fn a_failed_turn_serializes_turn_active_false_not_an_absent_key() {
+    // The agent answered `session/prompt` with an error: the host wrote an
+    // `error` terminator and nothing else. The transcript ends on the user
+    // bubble, so a client that only sees an absent key reads it as a turn
+    // still running and shows "Working…" after a reload.
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "this will fail"),
+        record(
+            2,
+            "prompt_complete",
+            json!({"sessionId": "session-1", "turnId": "turn-1", "stopReason": "error"}),
+        ),
+    ];
+    assert_eq!(wire_turn_active(&records), Some(json!(false)));
+}
+
+#[test]
+fn a_completed_turn_and_an_empty_log_serialize_turn_active_false() {
+    let completed = vec![
+        user_prompt(1, Some("turn-1"), "hi"),
+        chunk(2, "agent", "hello"),
+        prompt_complete(3, "turn-1"),
+    ];
+    assert_eq!(wire_turn_active(&completed), Some(json!(false)));
+    assert_eq!(wire_turn_active(&[]), Some(json!(false)));
+}
+
+#[test]
+fn a_named_open_turn_serializes_turn_active_true() {
+    let records = vec![user_prompt(1, Some("turn-1"), "still going")];
+    assert_eq!(wire_turn_active(&records), Some(json!(true)));
+}
+
+#[test]
+fn an_open_prompt_without_a_turn_id_leaves_turn_active_absent() {
+    // Open but unnameable (pre-1.8 record): the client derives it from the
+    // transcript tail, so the host must not claim either answer.
+    let records = vec![user_prompt(1, None, "legacy tail")];
+    assert_eq!(wire_turn_active(&records), None);
+}
+
+#[test]
+fn a_non_active_session_serializes_turn_active_false() {
+    let mut closed = metadata();
+    closed.status = PersistedSessionStatus::Closed;
+    let records = vec![user_prompt(1, Some("turn-1"), "left open at close")];
+    let payload = materialize_session_payload(&closed, &records);
+    let value = serde_json::to_value(&payload.metadata).expect("metadata serializes");
+    assert_eq!(value.get("turnActive"), Some(&json!(false)));
+}
+
+// --- issue #1298: the payload names how the last turn failed -----------------
+
+fn wire_last_turn_error(records: &[PersistedEventRecord]) -> Option<Value> {
+    let payload = materialize_session_payload(&metadata(), records);
+    let value = serde_json::to_value(&payload.metadata).expect("metadata serializes");
+    value.get("lastTurnError").cloned()
+}
+
+fn failed_terminator(seq: u64, stop_reason: &str, error: Option<Value>) -> PersistedEventRecord {
+    let mut payload =
+        json!({"sessionId": "session-1", "turnId": "turn-1", "stopReason": stop_reason});
+    if let Some(error) = error {
+        payload["error"] = error;
+    }
+    record(seq, "prompt_complete", payload)
+}
+
+#[test]
+fn a_failed_last_turn_carries_its_error_detail() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "this will fail"),
+        failed_terminator(
+            2,
+            "error",
+            Some(json!({
+                "message": "Internal error",
+                "code": -32603,
+                "providerCode": "provider_quota_exceeded",
+            })),
+        ),
+    ];
+    assert_eq!(
+        wire_last_turn_error(&records),
+        Some(json!({
+            "stopReason": "error",
+            "message": "Internal error",
+            "code": -32603,
+            "providerCode": "provider_quota_exceeded",
+        }))
+    );
+}
+
+#[test]
+fn a_failed_terminator_without_detail_still_names_its_stop_reason() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "agent died"),
+        failed_terminator(2, "crashed", None),
+    ];
+    assert_eq!(
+        wire_last_turn_error(&records),
+        Some(json!({"stopReason": "crashed"}))
+    );
+}
+
+#[test]
+fn a_timed_out_last_turn_is_a_turn_error() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "wedged"),
+        failed_terminator(2, "timeout", Some(json!({"message": "turn idle timeout"}))),
+    ];
+    assert_eq!(
+        wire_last_turn_error(&records),
+        Some(json!({"stopReason": "timeout", "message": "turn idle timeout"}))
+    );
+}
+
+#[test]
+fn a_successful_last_turn_has_no_turn_error() {
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hi"),
+        chunk(2, "agent", "hello"),
+        prompt_complete(3, "turn-1"),
+    ];
+    assert_eq!(wire_last_turn_error(&records), None);
+    assert_eq!(wire_last_turn_error(&[]), None);
+}
+
+#[test]
+fn a_newer_prompt_or_switch_retires_the_earlier_failure() {
+    let failed = failed_terminator(2, "error", Some(json!({"message": "Internal error"})));
+    let retried = vec![
+        user_prompt(1, Some("turn-1"), "fails"),
+        failed.clone(),
+        user_prompt(3, Some("turn-2"), "try again"),
+    ];
+    assert_eq!(wire_last_turn_error(&retried), None);
+
+    let later_success = vec![
+        user_prompt(1, Some("turn-1"), "fails"),
+        failed,
+        user_prompt(3, Some("turn-2"), "try again"),
+        chunk(4, "agent", "ok"),
+        prompt_complete(5, "turn-2"),
+    ];
+    assert_eq!(wire_last_turn_error(&later_success), None);
+}
+
+#[test]
+fn subagent_chunks_stay_out_of_the_main_reply_bubbles() {
+    let mut subagent_text = chunk(3, "agent", "subagent report");
+    subagent_text.payload["parentToolCallId"] = json!("toolu_agent");
+    let mut subagent_thought = chunk(4, "thought", "subagent thinking");
+    subagent_thought.payload["parentToolCallId"] = json!("toolu_agent");
+    let records = vec![
+        user_prompt(1, Some("turn-1"), "hello"),
+        chunk(2, "agent", "Main "),
+        subagent_text,
+        subagent_thought,
+        chunk(5, "agent", "reply"),
+        prompt_complete(6, "turn-1"),
+    ];
+    let mut meta = metadata();
+    meta.last_seq = 6;
+    let payload = materialize_session_payload(&meta, &records);
+
+    let ids: Vec<&str> = payload.messages.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["turn:turn-1", "snapshot:agent:2"]);
+    assert_eq!(
+        payload.messages[1].blocks,
+        vec![json!({"type": "text", "text": "Main reply"})]
+    );
+
+    // The incremental fold agrees, so `message_count` matches the payload.
+    let mut state = crate::acp::session_persistence::FoldState::default();
+    let mut opened = 0;
+    for record in &records {
+        let (next, opens) =
+            crate::acp::session_persistence::fold_step(state, &record.type_, &record.payload);
+        state = next;
+        opened += usize::from(opens);
+    }
+    assert_eq!(opened, payload.messages.len());
+}
+
+// --- reopen restores the session's model controls ----------------------------
+
+fn model_select(current: &str) -> Value {
+    json!({
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": current,
+        "options": [
+            {"value": "sonnet", "name": "Sonnet"},
+            {"value": "opus", "name": "Opus"},
+        ],
+    })
+}
+
+fn effort_select(current: &str) -> Value {
+    json!({
+        "id": "effort",
+        "name": "Effort",
+        "type": "select",
+        "currentValue": current,
+        "options": [
+            {"value": "low", "name": "Low"},
+            {"value": "high", "name": "High"},
+        ],
+    })
+}
+
+fn models(current: &str) -> Value {
+    json!({
+        "currentModelId": current,
+        "availableModels": [
+            {"modelId": "sonnet", "name": "Sonnet"},
+            {"modelId": "opus", "name": "Opus"},
+        ],
+    })
+}
+
+fn plan_and_default_modes() -> Value {
+    json!([
+        {"id": "default", "name": "Default"},
+        {"id": "plan", "name": "Plan"},
+    ])
+}
+
+fn session_created(seq: u64) -> PersistedEventRecord {
+    record(
+        seq,
+        "session_created",
+        json!({
+            "agentId": "runtime-1",
+            "sessionId": "session-1",
+            "modes": {"currentModeId": "default", "availableModes": plan_and_default_modes()},
+            "models": models("sonnet"),
+            "configOptions": [model_select("sonnet"), effort_select("low")],
+        }),
+    )
+}
+
+fn config_options_update(seq: u64, options: Value) -> PersistedEventRecord {
+    record(
+        seq,
+        "config_options_update",
+        json!({"agentId": "runtime-1", "sessionId": "session-1", "configOptions": options}),
+    )
+}
+
+fn mode_update(seq: u64, mode: &str) -> PersistedEventRecord {
+    record(
+        seq,
+        "mode_update",
+        json!({"agentId": "runtime-1", "sessionId": "session-1", "currentModeId": mode}),
+    )
+}
+
+fn wire_payload(records: &[PersistedEventRecord]) -> serde_json::Map<String, Value> {
+    match serde_json::to_value(materialize_session_payload(&metadata(), records)).unwrap() {
+        Value::Object(map) => map,
+        other => panic!("payload serializes to an object, got {other}"),
+    }
+}
+
+#[test]
+fn a_session_without_controls_records_omits_every_controls_key() {
+    let payload = wire_payload(&[
+        user_prompt(1, Some("t1"), "hi"),
+        chunk(2, "agent", "hello"),
+        prompt_complete(3, "t1"),
+    ]);
+    for key in ["configOptions", "modes", "models", "controlsSeq"] {
+        assert!(
+            !payload.contains_key(key),
+            "legacy payload must not carry {key}"
+        );
+    }
+}
+
+#[test]
+fn the_payload_carries_the_newest_controls_over_session_created() {
+    let payload = wire_payload(&[
+        session_created(1),
+        user_prompt(2, Some("t1"), "hi"),
+        config_options_update(3, json!([model_select("opus"), effort_select("high")])),
+        chunk(4, "agent", "hello"),
+        mode_update(5, "plan"),
+        prompt_complete(6, "t1"),
+    ]);
+    assert_eq!(
+        payload["configOptions"],
+        json!([model_select("opus"), effort_select("high")])
+    );
+    assert_eq!(payload["models"], models("opus"));
+    assert_eq!(
+        payload["modes"],
+        json!({"currentModeId": "plan", "availableModes": plan_and_default_modes()}),
+        "a mode_update without availableModes keeps the advertised list"
+    );
+    assert_eq!(payload["controlsSeq"], json!(5));
+}
+
+#[test]
+fn an_update_without_a_model_selector_keeps_the_created_models() {
+    let payload = wire_payload(&[
+        record(
+            1,
+            "session_created",
+            json!({"sessionId": "session-1", "models": models("sonnet")}),
+        ),
+        config_options_update(2, json!([effort_select("high")])),
+    ]);
+    assert_eq!(payload["configOptions"], json!([effort_select("high")]));
+    assert_eq!(payload["models"], models("sonnet"));
+    assert!(!payload.contains_key("modes"), "no record advertised modes");
+    assert_eq!(payload["controlsSeq"], json!(2));
+}
+
+#[test]
+fn controls_come_from_config_updates_when_the_log_has_no_session_created() {
+    // A pooled session promoted to durable persisted no `session_created`.
+    let payload = wire_payload(&[
+        config_options_update(3, json!([model_select("sonnet")])),
+        config_options_update(6, json!([model_select("opus")])),
+        user_prompt(7, Some("t1"), "hi"),
+    ]);
+    assert_eq!(payload["configOptions"], json!([model_select("opus")]));
+    assert_eq!(payload["models"], models("opus"));
+    assert!(!payload.contains_key("modes"));
+    assert_eq!(payload["controlsSeq"], json!(6));
+}

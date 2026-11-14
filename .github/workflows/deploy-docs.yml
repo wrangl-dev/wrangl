@@ -26,6 +26,10 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
+    env:
+      # Without Cloudflare secrets the site still builds (a CI check) but is
+      # deployed by hand with wrangler instead of from here.
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2
@@ -74,7 +78,7 @@ jobs:
         working-directory: website-docs
 
       - name: Deploy to Cloudflare Pages
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: env.HAS_CLOUDFLARE == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         working-directory: website-docs
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

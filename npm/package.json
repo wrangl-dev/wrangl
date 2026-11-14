@@ -1,0 +1,21 @@
+{
+  "name": "wrangl",
+  "version": "0.1.0",
+  "description": "Installs the Wrangl desktop app (agent manager and terminal) from GitHub Releases.",
+  "license": "MIT",
+  "homepage": "https://wrangl-landing.pages.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wrangl-dev/wrangl.git",
+    "directory": "npm"
+  },
+  "bin": {
+    "wrangl": "bin/wrangl.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

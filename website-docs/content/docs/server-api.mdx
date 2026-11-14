@@ -90,7 +90,7 @@ The upgrade request itself needs no token. After the socket opens, send an `auth
 {"id":"1","type":"authenticate","payload":{"protocolVersion":7,"deviceId":"my-client","clientInstanceId":"my-client-1","token":"<token>"}}
 ```
 
-The server refuses an `authenticate` with a different `protocolVersion`. The current frames, request types, and version number are in [`src/shared/types/web-protocol.types.ts`](https://github.com/wrangl-dev/wrangl/blob/dev/src/shared/types/web-protocol.types.ts) in the Wrangl repository. The Wrangl web app is the reference client, and its socket code is in `src/renderer/lib/`.
+The server refuses an `authenticate` with a different `protocolVersion`. The current frames, request types, and version number are in [`src/shared/types/web-protocol.types.ts`](https://github.com/wrangl-dev/wrangl/blob/main/src/shared/types/web-protocol.types.ts) in the Wrangl repository. The Wrangl web app is the reference client, and its socket code is in `src/renderer/lib/`.
 
 ## Add a route to the spec
 

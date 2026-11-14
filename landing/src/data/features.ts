@@ -84,6 +84,10 @@ export const features: Feature[] = [
     title: 'Embedded Browser & Annotations',
     description:
       'Reporting a UI bug usually means screenshots, arrows, and a long chat thread. Browse inside your workspace, mark up exactly what is wrong, and export a structured report your team can act on.',
+    video: {
+      src: '/features/06-browser-annotation.mp4',
+      poster: '/features/06-browser-annotation.jpg',
+    },
   },
   {
     id: '07',

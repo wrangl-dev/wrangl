@@ -1,0 +1,45 @@
+[package]
+name = "corral-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corral engine: sessions, undo history, the command registry every surface (UI, CLI, control channel, MCP) dispatches through, pointer tools, components and the Figma menu catalog"
+
+[lints]
+workspace = true
+
+[dependencies]
+corral-geom = { workspace = true }
+corral-color = { workspace = true }
+corral-doc = { workspace = true }
+corral-collab = { workspace = true }
+corral-layout = { workspace = true }
+corral-text = { workspace = true }
+corral-pathops = { workspace = true }
+corral-render = { workspace = true }
+corral-format = { workspace = true }
+corral-svg = { workspace = true }
+corral-pdf = { workspace = true }
+corral-vectordrawable = { workspace = true }
+craft-docpath = { workspace = true }
+corral-plugin = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+deunicode = { workspace = true }
+same-file = { workspace = true }
+web-time = "1.1.0"
+
+# Downloading a missing font (desktop only; the web keeps its built-in fonts). The bundled index
+# (~620 KB) lets the Missing fonts window tell which fonts can be downloaded without a request.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+craft-font-store = { workspace = true, features = ["bundled-index"] }
+craft-font-catalog = { workspace = true }
+
+[dev-dependencies]
+zip = { workspace = true }
+wat = { workspace = true }
+image = { workspace = true }

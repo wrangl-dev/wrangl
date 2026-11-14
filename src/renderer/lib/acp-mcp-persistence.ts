@@ -1,0 +1,339 @@
+import type {
+  McpEntryCatalogProvenance,
+  McpInstallCommitResult,
+  McpResolvedSecret
+} from '@shared/types/mcp-install.types'
+import { PersistenceKeys } from '@shared/types/persistence.types'
+import type { AgentCapabilities, McpServer, McpServerConfig } from '@/lib/acp-api'
+import { persistenceApi } from '@/lib/api'
+import { logFrontendError } from './log-api'
+
+export type McpTransport = 'stdio' | 'http' | 'sse'
+
+export type StoredMcpServer = McpServerConfig & {
+  id: string
+  enabled?: boolean
+  catalog?: McpEntryCatalogProvenance
+}
+
+export type McpValidationIssue =
+  | 'name-required'
+  | 'command-required'
+  | 'url-required'
+  | 'url-invalid'
+
+export const MCP_VALIDATION_MESSAGES: Record<McpValidationIssue, string> = {
+  'name-required': 'Name is required.',
+  'command-required': 'Command is required for stdio.',
+  'url-required': 'URL is required.',
+  'url-invalid': 'URL is invalid.'
+}
+
+export interface McpValidation {
+  valid: boolean
+  issues: McpValidationIssue[]
+}
+
+export interface SkippedMcpServer {
+  id: string
+  name: string
+  transport: 'http' | 'sse'
+}
+
+export interface McpServerSelection {
+  servers: McpServer[]
+  skipped: SkippedMcpServer[]
+  pending: boolean
+}
+
+export function transportOf(server: McpServerConfig): McpTransport {
+  return (server.type ?? 'stdio') as McpTransport
+}
+
+export function validateMcpServer(server: Partial<McpServerConfig>): McpValidation {
+  const issues: McpValidationIssue[] = []
+  if (!server.name || server.name.trim().length === 0) issues.push('name-required')
+  const type = (server.type ?? 'stdio') as McpTransport
+  if (type === 'stdio') {
+    const value = server as Partial<{ command: string }>
+    if (!value.command || value.command.trim().length === 0) issues.push('command-required')
+  } else {
+    const value = server as Partial<{ url: string }>
+    if (!value.url || value.url.trim().length === 0) {
+      issues.push('url-required')
+    } else {
+      try {
+        new URL(value.url)
+      } catch {
+        issues.push('url-invalid')
+      }
+    }
+  }
+  return { valid: issues.length === 0, issues }
+}
+
+function toWireServer(entry: StoredMcpServer): McpServer {
+  const { id: _id, enabled: _enabled, ...server } = entry
+  // The ACP `McpServer` schema requires `args` + `env` (stdio) and `headers`
+  // (http/sse) as non-optional arrays. The on-disk normalizer omits these
+  // when empty, so re-fill them here to keep the wire payload deserializable.
+  switch (transportOf(server)) {
+    case 'stdio': {
+      const { name, command, args, env } = server as Extract<McpServerConfig, { type?: 'stdio' }>
+      return { type: 'stdio', name, command, args: args ?? [], env: env ?? [] }
+    }
+    case 'http': {
+      const { name, url, headers } = server as Extract<McpServerConfig, { type: 'http' }>
+      return { type: 'http', name, url, headers: headers ?? [] }
+    }
+    case 'sse': {
+      const { name, url, headers } = server as Extract<McpServerConfig, { type: 'sse' }>
+      return { type: 'sse', name, url, headers: headers ?? [] }
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function stringPairs(value: unknown): Array<{ name: string; value: string }> | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return undefined
+  const pairs = value.filter(
+    (entry): entry is { name: string; value: string } =>
+      isRecord(entry) && typeof entry.name === 'string' && typeof entry.value === 'string'
+  )
+  return pairs.length === value.length ? pairs : undefined
+}
+
+function catalogProvenance(value: unknown): McpEntryCatalogProvenance | undefined {
+  if (!isRecord(value)) return undefined
+  const { name, version, kind, index, repositoryId, launchDigest } = value
+  if (
+    value.source !== 'mcp-registry' ||
+    typeof name !== 'string' ||
+    typeof version !== 'string' ||
+    (kind !== 'remote' && kind !== 'package') ||
+    typeof index !== 'number' ||
+    (repositoryId !== null && typeof repositoryId !== 'string') ||
+    typeof launchDigest !== 'string'
+  )
+    return undefined
+  return { source: 'mcp-registry', name, version, kind, index, repositoryId, launchDigest }
+}
+
+function normalizeStoredServer(value: unknown): StoredMcpServer | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string')
+    return null
+  if (value.enabled !== undefined && typeof value.enabled !== 'boolean') return null
+  const type = value.type ?? 'stdio'
+  if (type === 'stdio') {
+    if (typeof value.command !== 'string') return null
+    if (value.args !== undefined && !Array.isArray(value.args)) return null
+    const args = value.args?.filter((item): item is string => typeof item === 'string')
+    if (value.args !== undefined && args?.length !== value.args.length) return null
+    const env = stringPairs(value.env)
+    if (value.env !== undefined && env === undefined) return null
+    const catalog = catalogProvenance(value.catalog)
+    const server: StoredMcpServer = {
+      id: value.id,
+      type: 'stdio',
+      name: value.name,
+      command: value.command,
+      ...(args ? { args } : {}),
+      ...(env ? { env } : {}),
+      enabled: value.enabled ?? true,
+      ...(catalog ? { catalog } : {})
+    }
+    return validateMcpServer(server).valid ? server : null
+  }
+  if ((type === 'http' || type === 'sse') && typeof value.url === 'string') {
+    const headers = stringPairs(value.headers)
+    if (value.headers !== undefined && headers === undefined) return null
+    const catalog = catalogProvenance(value.catalog)
+    const server: StoredMcpServer = {
+      id: value.id,
+      type,
+      name: value.name,
+      url: value.url,
+      ...(headers ? { headers } : {}),
+      enabled: value.enabled ?? true,
+      ...(catalog ? { catalog } : {})
+    }
+    return validateMcpServer(server).valid ? server : null
+  }
+  return null
+}
+
+export function normalizeMcpRegistry(value: unknown): StoredMcpServer[] {
+  if (!Array.isArray(value)) return []
+  const normalized = value.flatMap((entry) => {
+    const server = normalizeStoredServer(entry)
+    return server ? [server] : []
+  })
+  if (normalized.length !== value.length) {
+    console.warn(`[mcp] discarded ${value.length - normalized.length} malformed registry entries`)
+  }
+  return normalized
+}
+
+function uniqueName(proposed: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(proposed)) return proposed
+  let suffix = 2
+  while (taken.has(`${proposed}-${suffix}`)) suffix += 1
+  return `${proposed}-${suffix}`
+}
+
+function secretValue(
+  secrets: McpResolvedSecret[],
+  slot: McpResolvedSecret['slot'],
+  name: string
+): string {
+  const secret = secrets.find((entry) => entry.slot === slot && entry.name === name)
+  if (!secret) throw new Error(`The install result has no value for ${slot} ${name}`)
+  return secret.value
+}
+
+function launchShape(server: McpServerConfig): unknown[] {
+  const names = (pairs: { name: string }[] | undefined) => (pairs ?? []).map((pair) => pair.name)
+  return server.type === 'http' || server.type === 'sse'
+    ? [server.type, server.url, names(server.headers)]
+    : ['stdio', server.command, server.args ?? [], names(server.env)]
+}
+
+/**
+ * Whether two configs launch the same server: what a catalog install's launch
+ * digest covers. Names and env or header values may differ.
+ */
+export function sameLaunch(a: McpServerConfig, b: McpServerConfig): boolean {
+  return JSON.stringify(launchShape(a)) === JSON.stringify(launchShape(b))
+}
+
+export function catalogInstallEntry(
+  result: McpInstallCommitResult,
+  takenNames: ReadonlySet<string>,
+  id: string
+): StoredMcpServer {
+  if (!result.provenance) throw new Error('A catalog install result carries its provenance')
+  const name = uniqueName(result.name, takenNames)
+  const catalog: McpEntryCatalogProvenance = {
+    source: 'mcp-registry',
+    ...result.provenance,
+    launchDigest: result.launchDigest
+  }
+  const { config, secrets } = result
+  if (config.transport === 'stdio') {
+    return {
+      id,
+      type: 'stdio',
+      name,
+      command: config.command,
+      args: config.args,
+      env: config.env.map((slot) => ({
+        name: slot.name,
+        value: secretValue(secrets, 'env', slot.name)
+      })),
+      enabled: true,
+      catalog
+    }
+  }
+  return {
+    id,
+    type: config.transport,
+    name,
+    url: config.url,
+    headers: config.headers.map((slot) => ({
+      name: slot.name,
+      value: secretValue(secrets, 'header', slot.name)
+    })),
+    enabled: true,
+    catalog
+  }
+}
+
+export function buildMcpServers(registry: StoredMcpServer[], selectedIds: string[]): McpServer[] {
+  const byId = new Map(registry.map((server) => [server.id, server]))
+  return selectedIds.flatMap((id) => {
+    const entry = byId.get(id)
+    return entry ? [toWireServer(entry)] : []
+  })
+}
+
+export function selectMcpServersForAgent(
+  registry: StoredMcpServer[],
+  capabilities: AgentCapabilities | null | undefined
+): McpServerSelection {
+  const servers: McpServer[] = []
+  const skipped: SkippedMcpServer[] = []
+  const mcpCapabilities = capabilities?.mcpCapabilities
+  const pending = capabilities == null
+
+  for (const entry of registry) {
+    if (entry.enabled === false) continue
+    const transport = transportOf(entry)
+    if (transport === 'stdio' || pending) {
+      servers.push(toWireServer(entry))
+    } else if (mcpCapabilities?.[transport] === true) {
+      servers.push(toWireServer(entry))
+    } else {
+      skipped.push({ id: entry.id, name: entry.name, transport })
+    }
+  }
+
+  return { servers, skipped, pending }
+}
+
+/** The registry is one host-wide list, read the same way on every surface. */
+export async function loadMcpServers(): Promise<StoredMcpServer[]> {
+  const res = await persistenceApi.read<unknown>(PersistenceKeys.acpMcpServers)
+  if (res.success) return dropLegacyCanvasMcpEntries(res.data)
+  if (res.code === 'KEY_NOT_FOUND') return []
+  throw new Error(res.error ?? 'Failed to load MCP servers')
+}
+
+const LEGACY_CANVAS_MCP_ID_PREFIX = 'canvas-mcp-'
+
+/**
+ * One-time migration: per-project `canvas-mcp-*` entries were written by the
+ * retired canvas MCP proxy and now point at routes that no longer exist. They
+ * are dropped on load and the cleaned registry is written back, so a later
+ * load finds nothing to drop. A failed write-back leaves the file as it was
+ * and the next load retries.
+ */
+async function dropLegacyCanvasMcpEntries(raw: unknown): Promise<StoredMcpServer[]> {
+  if (!Array.isArray(raw)) return normalizeMcpRegistry(raw)
+  const kept = raw.filter(
+    (entry) =>
+      !(
+        isRecord(entry) &&
+        typeof entry.id === 'string' &&
+        entry.id.startsWith(LEGACY_CANVAS_MCP_ID_PREFIX)
+      )
+  )
+  const registry = normalizeMcpRegistry(kept)
+  const dropped = raw.length - kept.length
+  if (dropped === 0) return registry
+  void logFrontendError({
+    level: 'info',
+    source: 'acp-mcp-persistence.dropLegacyCanvasMcpEntries',
+    message: `removed ${dropped} legacy canvas-mcp-* MCP registry entries`
+  })
+  try {
+    await saveMcpServers(registry)
+  } catch (err) {
+    void logFrontendError({
+      level: 'warn',
+      source: 'acp-mcp-persistence.dropLegacyCanvasMcpEntries',
+      message: `failed to persist the registry without legacy canvas-mcp-* entries (${String(err)})`
+    })
+  }
+  return registry
+}
+
+export async function saveMcpServers(list: StoredMcpServer[]): Promise<void> {
+  const res = await persistenceApi.write(PersistenceKeys.acpMcpServers, normalizeMcpRegistry(list))
+  if (!res.success) {
+    throw new Error(res.error ?? 'Failed to persist MCP servers')
+  }
+}

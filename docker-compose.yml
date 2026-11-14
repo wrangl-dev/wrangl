@@ -1,0 +1,71 @@
+# wrangl-server in a container. Guide: docs/deployment-guide.md, "Run in Docker".
+#
+#   mkdir -p workspace
+#   docker compose up -d
+#   docker compose exec wrangl-server cat /home/wrangl/.local/state/wrangl/web-auth-token
+#
+# Then open http://localhost:8080/#token=<token>.
+#
+# Optional settings come from the shell or a .env file next to this file:
+# WRANGL_PORT, WRANGL_WORKSPACE, WRANGL_IMAGE, WRANGL_WEB_AUTH_TOKEN,
+# WRANGL_ALLOWED_ORIGINS, and, for `docker compose build`, WRANGL_RELEASE,
+# WRANGL_UID, and WRANGL_GID.
+
+name: wrangl
+
+services:
+  wrangl-server:
+    image: ${WRANGL_IMAGE:-ghcr.io/wrangl-dev/wrangl-server:latest}
+    build:
+      context: .
+      args:
+        WRANGL_RELEASE: ${WRANGL_RELEASE:-latest}
+        WRANGL_UID: ${WRANGL_UID:-1000}
+        WRANGL_GID: ${WRANGL_GID:-1000}
+    restart: unless-stopped
+    ports:
+      # Loopback only. "8080:8080" or "0.0.0.0:8080:8080" publishes the server
+      # on every network the host is on. The auth token still applies, but the
+      # server speaks plain HTTP, so the token crosses the network unencrypted.
+      # For remote access, put an HTTPS reverse proxy in front instead.
+      - "127.0.0.1:${WRANGL_PORT:-8080}:8080"
+    environment:
+      # Empty: the server generates a token on first start and keeps it in the
+      # wrangl-home volume. A value here replaces that token.
+      WRANGL_WEB_AUTH_TOKEN: ${WRANGL_WEB_AUTH_TOKEN:-}
+      # The public origin of a reverse proxy that rewrites the Host header,
+      # for example https://wrangl.example.com. Comma-separate several.
+      WRANGL_ALLOWED_ORIGINS: ${WRANGL_ALLOWED_ORIGINS:-}
+      # Requests reach the container from the Docker network, never from
+      # loopback, so without this the server refuses every file and git write
+      # from the browser. Writes stay confined to registered projects, and the
+      # auth token is still required.
+      WRANGL_SERVER_ALLOW_REMOTE_WRITES: "true"
+      # Sessions and the project registry live under --state-dir in the
+      # wrangl-home volume. Set these only to move one of them elsewhere.
+      # WRANGL_SESSIONS_DIR: /home/wrangl/.local/state/wrangl/sessions
+      # WRANGL_PROJECTS_FILE: /home/wrangl/.local/state/wrangl/projects.json
+    volumes:
+      # Server state, the auth token, and the home directory of the user that
+      # runs shells and agents (git config, SSH keys, agent logins).
+      - wrangl-home:/home/wrangl
+      # The only host directory the server can see. Add projects under
+      # /workspace in the web UI.
+      - type: bind
+        source: ${WRANGL_WORKSPACE:-./workspace}
+        target: /workspace
+        bind:
+          create_host_path: false
+    # Hardening. If a tool you run in Wrangl must write outside /home/wrangl,
+    # /workspace, or /tmp, remove read_only. /tmp is mounted exec so tools can
+    # run helper binaries from it.
+    read_only: true
+    tmpfs:
+      - /tmp:exec,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  wrangl-home:

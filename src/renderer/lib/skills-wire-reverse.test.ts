@@ -1,0 +1,369 @@
+import { selectionContextToken, serializeSelectionContexts } from '@/lib/composer/selection-context'
+import {
+  conversationEnvelope,
+  conversationWireLabel,
+  type TranscriptGap
+} from '@/lib/conversation-envelope'
+import {
+  commandToken,
+  conversationToken,
+  fileToken,
+  replaceConversationTokensInline,
+  SKILL_TOKEN_END,
+  SKILL_TOKEN_START,
+  skillToken
+} from '@/lib/skill-tokens'
+import { formatPromptWithSkills } from '@/lib/skills-prompt'
+import { wireBlocksToDisplay, wireTextToDisplay } from '@/lib/skills-wire-reverse'
+
+const GIT_PATH = '/home/u/.agents/skills/git-worktree/SKILL.md'
+const REL_PATH = '/home/u/.agents/skills/release-version/SKILL.md'
+const WIN_PATH = 'E:\\open-source\\PecutAPP\\wrangl\\.agents\\skills\\bmad-build\\SKILL.md'
+
+describe('wireTextToDisplay', () => {
+  it('reconstructs a single framed skill with its inline marker', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\nuse this (git-worktree) now`
+    expect(wireTextToDisplay(wire)).toBe(`use this ${skillToken('git-worktree')} now`)
+  })
+
+  it('reconstructs multiple skills preserving each marker position and duplicates', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\nrelease-version: ${REL_PATH}\n\n---\n\nfirst (git-worktree) then (git-worktree) and (release-version)`
+    expect(wireTextToDisplay(wire)).toBe(
+      `first ${skillToken('git-worktree')} then ${skillToken('git-worktree')} and ${skillToken('release-version')}`
+    )
+  })
+
+  it('reconstructs a token-only send (marker is the whole user text)', () => {
+    const wire = `# Agent Skills\n\nbmad-build: ${WIN_PATH}\n\n---\n\n(bmad-build)`
+    expect(wireTextToDisplay(wire)).toBe(skillToken('bmad-build'))
+  })
+
+  it('handles a Windows path with a drive-letter colon in the header line', () => {
+    const wire = `# Agent Skills\n\nbmad-build: ${WIN_PATH}\n\n---\n\n(bmad-build)`
+    expect(wireTextToDisplay(wire)).toBe(skillToken('bmad-build'))
+  })
+
+  it('reconstructs a command-prefixed turn as a command token + skill tokens', () => {
+    const wire = `/compact # Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\n(git-worktree) hello`
+    expect(wireTextToDisplay(wire)).toBe(
+      `${commandToken('compact')} ${skillToken('git-worktree')} hello`
+    )
+  })
+
+  it('reconstructs chips for a token-free send (skills section only, no separator)', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}`
+    expect(wireTextToDisplay(wire)).toBe(skillToken('git-worktree'))
+  })
+
+  it('reconstructs every framed chip for a multi-skill token-free send', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\nrelease-version: ${REL_PATH}`
+    expect(wireTextToDisplay(wire)).toBe(
+      `${skillToken('git-worktree')} ${skillToken('release-version')}`
+    )
+  })
+
+  it('keeps a separator-only fragment raw (split-streaming prefix)', () => {
+    const prefix = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\n`
+    expect(wireTextToDisplay(prefix)).toBe(prefix)
+  })
+
+  it('passes through when no marker resolves to a framed name', () => {
+    // Split continuation: markers not yet arrived, or prose that merely
+    // matches the shape. Either way — verbatim.
+    const text = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\nno markers here`
+    expect(wireTextToDisplay(text)).toBe(text)
+  })
+
+  it('returns plain text without the header verbatim', () => {
+    expect(wireTextToDisplay('hello world')).toBe('hello world')
+    expect(wireTextToDisplay('')).toBe('')
+  })
+
+  it('returns text that merely mentions the header in prose verbatim', () => {
+    const prose = 'The agent framed it as # Agent Skills but there is no separator here'
+    expect(wireTextToDisplay(prose)).toBe(prose)
+  })
+
+  it('passes through when the header exists but the separator is missing with body lines', () => {
+    const malformed = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\nextra\n\n---\n\n(git-worktree)`
+    expect(wireTextToDisplay(malformed)).toBe(malformed)
+  })
+
+  it('passes through when the header section contains a blank line', () => {
+    const malformed = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n\n\n---\n\n(git-worktree)`
+    // headerAndBody = "git-worktree: path\n" → the '\n\n' check aborts before
+    // the separator is even consulted.
+    expect(wireTextToDisplay(malformed)).toBe(malformed)
+  })
+
+  it('passes through when a header line has an empty path', () => {
+    const malformed = `# Agent Skills\n\ngit-worktree:\n\n---\n\n(git-worktree)`
+    expect(wireTextToDisplay(malformed)).toBe(malformed)
+  })
+
+  it('passes through when a header line has an invalid name', () => {
+    const malformed = `# Agent Skills\n\nnot a name: ${GIT_PATH}\n\n---\n\n(git-worktree)`
+    expect(wireTextToDisplay(malformed)).toBe(malformed)
+  })
+
+  it('keeps an unframed marker literal (typed parenthetical, no header entry)', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\nsee (footnote) and (git-worktree)`
+    expect(wireTextToDisplay(wire)).toBe(`see (footnote) and ${skillToken('git-worktree')}`)
+  })
+
+  it('passes through an empty header section (separator with no lines)', () => {
+    const malformed = `# Agent Skills\n\n\n\n---\n\n(git-worktree)`
+    // afterHeader starts '\n\n', headerAndBody = '\n---\n\n...' → sepIdx 0 →
+    // headerLines '' → abort.
+    expect(wireTextToDisplay(malformed)).toBe(malformed)
+  })
+
+  it('passes through a separator without the header', () => {
+    const text = `intro\n\n---\n\n(git-worktree)`
+    expect(wireTextToDisplay(text)).toBe(text)
+  })
+
+  it('is a no-op on display text that already carries tokens', () => {
+    const display = `use this ${skillToken('git-worktree')} now`
+    expect(wireTextToDisplay(display)).toBe(display)
+  })
+
+  it('passes through a lone command prefix without the skills header', () => {
+    for (const text of ['/compact hello', '/tmp is full', '/help', '/compact hi\r\nthere']) {
+      expect(wireTextToDisplay(text)).toBe(text)
+    }
+  })
+
+  it('reconstructs a non-ASCII skill name', () => {
+    const wire = '# Agent Skills\n\nCafé-review: /skills/cafe/SKILL.md\n\n---\n\nrun (Café-review)'
+    expect(wireTextToDisplay(wire)).toBe(`run ${skillToken('Café-review')}`)
+  })
+
+  it('reconstructs CRLF-framed wire text', () => {
+    const wire = `/compact # Agent Skills\r\n\r\ngit-worktree: ${GIT_PATH}\r\n\r\n---\r\n\r\n(git-worktree) hello`
+    expect(wireTextToDisplay(wire)).toBe(
+      `${commandToken('compact')} ${skillToken('git-worktree')} hello`
+    )
+  })
+
+  it('round-trips the forward direction of formatPromptWithSkills', () => {
+    const display = `use this ${skillToken('git-worktree')} and ${skillToken('release-version')}`
+    const wire = formatPromptWithSkills(
+      [
+        { name: 'git-worktree', path: GIT_PATH },
+        { name: 'release-version', path: REL_PATH }
+      ],
+      display
+    )
+    expect(wireTextToDisplay(wire)).toBe(display)
+  })
+})
+
+describe('wireBlocksToDisplay', () => {
+  it('normalizes text blocks of a user prompt and keeps other blocks untouched', () => {
+    const image = { type: 'image', data: 'abc' }
+    const blocks = [
+      { type: 'text', text: `# Agent Skills\n\nbmad-build: ${WIN_PATH}\n\n---\n\n(bmad-build)` },
+      image
+    ]
+    const out = wireBlocksToDisplay(blocks)
+    expect(out[0]).toEqual({ type: 'text', text: skillToken('bmad-build') })
+    expect(out[1]).toBe(image)
+  })
+
+  it('returns the same array reference when nothing changes', () => {
+    const blocks = [{ type: 'text', text: 'hello' }]
+    expect(wireBlocksToDisplay(blocks)).toBe(blocks)
+  })
+
+  it('keeps a text block with no text field untouched', () => {
+    const blocks = [{ type: 'text' }]
+    expect(wireBlocksToDisplay(blocks)).toBe(blocks)
+  })
+
+  it('rebuilds file pills from resource_link blocks and keeps each link as an attachment', () => {
+    const image = { type: 'image', data: 'abc' }
+    const link = {
+      type: 'resource_link',
+      uri: 'file:///E:/work/my%20app/src/auth.ts',
+      name: 'auth.ts',
+      mimeType: 'text/plain'
+    }
+    const blocks = [
+      { type: 'text', text: 'compare (auth.ts) with (auth.ts) and (notes)' },
+      image,
+      link
+    ]
+    expect(wireBlocksToDisplay(blocks)).toEqual([
+      {
+        type: 'text',
+        text: `compare ${fileToken('auth.ts', 'E:/work/my app/src/auth.ts')} with ${fileToken('auth.ts', 'E:/work/my app/src/auth.ts')} and (notes)`
+      },
+      image,
+      link
+    ])
+  })
+
+  it('rebuilds file pills inside a skill-framed, command-prefixed prompt', () => {
+    const blocks = [
+      {
+        type: 'text',
+        text: `/review # Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\n(git-worktree) on (auth.ts)`
+      },
+      { type: 'resource_link', uri: 'file:///home/u/app/auth.ts', name: 'auth.ts' }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toEqual([
+      {
+        type: 'text',
+        text: `${commandToken('review')} ${skillToken('git-worktree')} on ${fileToken('auth.ts', '/home/u/app/auth.ts')}`
+      },
+      { type: 'resource_link', uri: 'file:///home/u/app/auth.ts', name: 'auth.ts' }
+    ])
+  })
+
+  it('keeps a marker as text when same-named links point at different files', () => {
+    const blocks = [
+      { type: 'text', text: '(index.ts) vs (index.ts) vs (index.ts)' },
+      { type: 'resource_link', uri: 'file:///a/index.ts', name: 'index.ts' },
+      { type: 'resource_link', uri: 'file:///b/index.ts', name: 'index.ts' }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toBe(blocks)
+  })
+
+  it('keeps the marker of a link with a malformed file URI as text', () => {
+    const blocks = [
+      { type: 'text', text: '(bad.ts) and (auth.ts)' },
+      { type: 'resource_link', uri: 'file:///%', name: 'bad.ts' },
+      { type: 'resource_link', uri: 'file:///w/auth.ts', name: 'auth.ts' }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toEqual([
+      { type: 'text', text: `(bad.ts) and ${fileToken('auth.ts', '/w/auth.ts')}` },
+      { type: 'resource_link', uri: 'file:///%', name: 'bad.ts' },
+      { type: 'resource_link', uri: 'file:///w/auth.ts', name: 'auth.ts' }
+    ])
+  })
+
+  it('keeps a resource_link with no matching marker as an attachment', () => {
+    const blocks = [
+      { type: 'text', text: 'see attached' },
+      { type: 'resource_link', uri: 'file:///a/report.pdf', name: 'report.pdf' }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toBe(blocks)
+  })
+
+  it('emits token sentinels the timeline chip renderer parses', () => {
+    const wire = `# Agent Skills\n\ngit-worktree: ${GIT_PATH}\n\n---\n\n(git-worktree)`
+    const out = wireBlocksToDisplay([{ type: 'text', text: wire }])
+    const text = out[0].text ?? ''
+    expect(text).toContain(SKILL_TOKEN_START)
+    expect(text).toContain(SKILL_TOKEN_END)
+    expect(text).not.toContain('# Agent Skills')
+  })
+})
+
+describe('wireTextToDisplay with selection contexts', () => {
+  const ctx = selectionContextToken({ text: 'call (git-worktree) first', language: 'sh' })
+
+  it('restores context chips from a plain prompt', () => {
+    const display = `Explain ${ctx} please`
+    expect(wireTextToDisplay(serializeSelectionContexts(display))).toBe(display)
+  })
+
+  it('restores context and skill chips from a skill-framed prompt', () => {
+    const display = `Use ${skillToken('git-worktree')} on ${ctx}`
+    const wire = formatPromptWithSkills(
+      [{ name: 'git-worktree', path: GIT_PATH }],
+      serializeSelectionContexts(display)
+    )
+    expect(wire.startsWith('# Agent Skills')).toBe(true)
+    expect(wireTextToDisplay(wire)).toBe(display)
+  })
+})
+
+describe('wireBlocksToDisplay with conversation envelopes', () => {
+  const wireOf = (display: string, gap: TranscriptGap | null = null) =>
+    replaceConversationTokensInline(display, (title, sessionId) =>
+      conversationWireLabel(title, sessionId, gap)
+    )
+
+  it('drops the transcript envelope and restores the conversation pill', () => {
+    const display = `compare ${conversationToken('Fix "web" <reconnect>', 'sess-1')} with this`
+    const envelope = conversationEnvelope('sess-1', 'Fix "web" <reconnect>', 'User: hi')
+    expect(wireOf(display)).toBe(
+      'compare (conversation: Fix "web" <reconnect> [wrangl-chat:sess-1]) with this'
+    )
+    expect(
+      wireBlocksToDisplay([
+        { type: 'text', text: wireOf(display) },
+        { type: 'text', text: envelope }
+      ])
+    ).toEqual([{ type: 'text', text: display }])
+  })
+
+  it('restores two same-title chats to their own sessions', () => {
+    const display = `${conversationToken('Bug', 'id-1')} vs ${conversationToken('Bug', 'id-2')}`
+    expect(
+      wireBlocksToDisplay([
+        { type: 'text', text: wireOf(display) },
+        { type: 'text', text: conversationEnvelope('id-1', 'Bug', 'User: one') },
+        { type: 'text', text: conversationEnvelope('id-2', 'Bug', 'User: two') }
+      ])
+    ).toEqual([{ type: 'text', text: display }])
+  })
+
+  it('restores the pill of a chat whose transcript was unavailable (no envelope)', () => {
+    const display = `see ${conversationToken('Old chat', 'gone')} `
+    expect(wireOf(display, 'unavailable')).toBe(
+      'see (conversation: Old chat, transcript unavailable [wrangl-chat:gone]) '
+    )
+    expect(wireBlocksToDisplay([{ type: 'text', text: wireOf(display, 'unavailable') }])).toEqual([
+      { type: 'text', text: display }
+    ])
+  })
+
+  it('restores the pill of a chat whose transcript hit the context limit (no envelope)', () => {
+    const display = `see ${conversationToken('Big chat', 'big')} `
+    expect(wireOf(display, 'omitted')).toBe(
+      'see (conversation: Big chat, transcript omitted: context limit [wrangl-chat:big]) '
+    )
+    expect(wireBlocksToDisplay([{ type: 'text', text: wireOf(display, 'omitted') }])).toEqual([
+      { type: 'text', text: display }
+    ])
+  })
+
+  it('restores the pill of a chat whose folded transcript was partial', () => {
+    const display = `see ${conversationToken('Fix bug', 'chain')} `
+    expect(wireOf(display, 'partial')).toBe(
+      'see (conversation: Fix bug, transcript partial: earlier history unavailable [wrangl-chat:chain]) '
+    )
+    expect(
+      wireBlocksToDisplay([
+        { type: 'text', text: wireOf(display, 'partial') },
+        { type: 'text', text: conversationEnvelope('chain', 'Fix bug', 'User: later turn') }
+      ])
+    ).toEqual([{ type: 'text', text: display }])
+  })
+
+  it('keeps a file marker inside a chat title as title text', () => {
+    const link = { type: 'resource_link', uri: 'file:///w/auth.ts', name: 'auth.ts' }
+    const display = `see ${conversationToken('Fix (auth.ts) crash', 's1')} and `
+    expect(
+      wireBlocksToDisplay([{ type: 'text', text: `${wireOf(display)}(auth.ts)` }, link])
+    ).toEqual([{ type: 'text', text: `${display}${fileToken('auth.ts', '/w/auth.ts')}` }, link])
+  })
+
+  it('keeps typed conversation-like text as plain text', () => {
+    const blocks = [
+      { type: 'text', text: 'what is (conversation: Foo) and (conversation: Bar) [wrangl-chat:x]' },
+      { type: 'text', text: conversationEnvelope('foo-id', 'Foo', 'User: hi') }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toEqual([blocks[0]])
+  })
+
+  it('does not treat a user message that merely quotes the tag as an envelope', () => {
+    const blocks = [
+      { type: 'text', text: 'what does <wrangl-conversation id="x" title="y"> mean?' }
+    ]
+    expect(wireBlocksToDisplay(blocks)).toBe(blocks)
+  })
+})

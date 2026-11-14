@@ -1,0 +1,99 @@
+---
+title: Install Wrangl
+description: Install the Wrangl desktop app on macOS, Windows, or Linux.
+---
+
+The desktop app is called **Wrangl**. Every release has builds for macOS, Windows, and Linux on the [GitHub releases page](https://github.com/wrangl-dev/wrangl/releases/latest).
+
+If you want to run Wrangl on a server and open it in a browser or on your phone, install `wrangl-server` instead. See [Browser and phone](/docs/remote).
+
+## macOS
+
+You can install Wrangl with Homebrew, with the install script, or from a disk image. All three give you the same app.
+
+### Homebrew
+
+```bash
+brew tap wrangl-dev/wrangl
+brew install --cask wrangl
+```
+
+### Install script
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.sh | bash
+```
+
+The script always installs the newest Wrangl release.
+
+The script does these things:
+
+1. It finds the latest release and the disk image for your Mac (Apple silicon or Intel).
+2. It asks `Install Wrangl <version> (...) to /Applications? [y/N]`. Type `y` and press Enter.
+3. It downloads the disk image and checks it against the release checksums. If the check fails, it installs nothing.
+4. It copies **Wrangl.app** to `/Applications`.
+
+To skip the question, run the script with `WRANGL_INSTALL_YES=1`. To install somewhere other than `/Applications`, set `WRANGL_INSTALL_APPLICATIONS_DIR`.
+
+### Disk image
+
+1. Open the [latest release](https://github.com/wrangl-dev/wrangl/releases/latest).
+2. Download the `.dmg` for your Mac. The file ending in `_aarch64.dmg` is for Apple silicon. The file ending in `_x64.dmg` is for Intel.
+3. Open the `.dmg` and drag **Wrangl** into **Applications**.
+
+## Windows
+
+1. Open the [latest release](https://github.com/wrangl-dev/wrangl/releases/latest).
+2. Download the file ending in `_x64-setup.exe` or the file ending in `_x64_en-US.msi`. Both install the same app. Builds are for 64-bit x86 Windows.
+3. Run the installer.
+
+The install script does not work on Windows.
+
+## Linux
+
+Linux builds are for 64-bit x86 (`x86_64`) only. They need WebKitGTK 2.40 or later. Debian 12, Ubuntu 24.04, and an updated Ubuntu 22.04 have it.
+
+### Install script (AppImage)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.sh | bash
+```
+
+The script downloads the latest AppImage and checks it against the release checksums. Then it does these things:
+
+- It saves the AppImage as `~/.local/bin/wrangl.AppImage`.
+- It adds the `~/.local/bin/wrangl` command, which starts the AppImage. On Wayland, this command also loads your system's `libwayland-client` library so that the window is not blank with Mesa 25 or later. Terminals in Wrangl do not get that setting. If the library is in another folder, set `WRANGL_WAYLAND_CLIENT_LIB` to its path.
+- It adds a **Wrangl** entry to your application menu.
+- It warns you if `~/.local/bin` is not on your `PATH`. Add that folder to your `PATH` to start Wrangl from a shell with `wrangl`.
+
+Before it installs, the script asks you to confirm. To skip the question, run it with `WRANGL_INSTALL_YES=1`. To use a different folder, set `WRANGL_INSTALL_BIN_DIR`.
+
+### Debian, Ubuntu, Fedora, and other packages
+
+The [latest release](https://github.com/wrangl-dev/wrangl/releases/latest) also has these files:
+
+- A `.deb` package (`Wrangl_<version>_amd64.deb`) for Debian, Ubuntu, and similar systems.
+- An `.rpm` package (`Wrangl-<version>-1.x86_64.rpm`) for Fedora and similar systems.
+- The `.AppImage` file (`Wrangl_<version>_amd64.AppImage`), if you want to manage it yourself.
+
+Install the package with your system's package manager. For example, on Ubuntu:
+
+```bash
+sudo apt install ./Wrangl_<version>_amd64.deb
+```
+
+### Arch Linux (AUR)
+
+Wrangl is in the AUR as `wrangl`. Install it with your AUR helper. For example:
+
+```bash
+yay -S wrangl
+```
+
+## Updates
+
+The desktop app checks for new versions and can install them for you. You can pick the **Stable**, **Insider**, or **Nightly** channel. See [Settings](/docs/settings) for details.
+
+## Next step
+
+[Create your first project](/docs/getting-started/first-project).

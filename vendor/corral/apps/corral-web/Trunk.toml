@@ -1,0 +1,15 @@
+# Build with: trunk build --release   (from apps/corral-web)
+[build]
+target = "index.html"
+dist = "../../dist/web"
+public_url = "./"
+filehash = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8767
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["../../packaging/web/brand-index.sh"]

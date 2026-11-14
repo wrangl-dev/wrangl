@@ -1,0 +1,535 @@
+//! Web ACP Agent runtime — headless server + browser client support.
+//!
+//! This module owns the transport-neutral seams the `acp` dispatcher emits
+//! through, plus the standalone Axum server (Stories 1.2–1.3) and the live WS
+//! relay (Story 1.4).
+//!
+//! - Desktop and standalone `wrangl-server` both register a live
+//!   [`sink::WsRelaySink`] (owns per-session event logs + seq counters +
+//!   subscriber set). The desktop renderer reads it over a Tauri
+//!   `ipc::Channel` ([`ws::channel`]); `wrangl-server` calls [`serve`].
+//! - Dev static serving of `dist-web/` is [`assets`] (Story 1.3); production
+//!   rust-embed embedding/serving is complete.
+//!
+//! Auth / sandbox land in later stories. The WS relay protocol (envelope, seq,
+//! event log, cursor, tiers) is [`ws`] (Story 1.4).
+
+pub mod agent_reaper;
+#[cfg(test)]
+mod agent_reaper_tests;
+
+pub mod acp_api;
+pub mod assets;
+pub mod auth;
+pub mod automation_api;
+pub mod browser_policy_api;
+pub mod canvas_api;
+pub mod canvas_persistence_api;
+pub mod capabilities;
+pub mod catalog_api;
+pub mod chat_activity;
+pub mod chat_reads;
+pub mod command_ledger;
+pub mod config;
+pub mod connection_runtime;
+pub mod diagnostics_api;
+pub mod fs_api;
+pub mod fs_watcher;
+pub mod git_api;
+pub mod git_diff_stat_api;
+pub mod git_history_api;
+pub mod git_hunk_api;
+pub mod github_api;
+pub mod host_allow;
+pub mod install_api;
+pub mod log_api;
+pub mod mcp_catalog_api;
+#[cfg(test)]
+pub(crate) mod log_capture;
+pub mod mcp_oauth_api;
+pub mod mcp_probe_api;
+pub mod mcp_registry;
+pub mod openapi;
+pub mod origin;
+pub mod permissions;
+pub mod presence;
+pub mod project_icon_api;
+pub mod project_registry;
+pub mod projects_api;
+pub mod prompt_turn;
+#[cfg(test)]
+mod oauth_redirect_base_tests;
+#[cfg(test)]
+mod prompt_turn_tests;
+pub mod route_deadline;
+pub mod router;
+pub mod search_api;
+pub mod server_config_file;
+pub mod setup;
+pub mod sink;
+pub mod skills_api;
+pub mod store;
+pub mod terminal_ws;
+pub mod watch;
+pub mod worktree_api;
+pub mod worktree_rename_api;
+pub mod ws;
+
+pub use config::ServerConfig;
+pub use permissions::PermissionRendezvous;
+pub use permissions::QuestionRendezvous;
+pub use project_registry::{ProjectListPayload, ProjectRegistry, ProjectSummary};
+pub use sink::{fan_out, EventSink, EventStream, StreamItem, WsRelaySink};
+pub use ws::{AppState, HistoryMode, ReliabilityTier, RuntimePolicy, SequencedEvent, WsErrorCode};
+
+use std::future::Future;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
+use tracing::{error, info, warn};
+
+use crate::acp::AcpManager;
+use crate::pty::PtyManager;
+use crate::trackers::{CwdTracker, ExitCodeTracker, GitTracker, TerminalEventHub};
+use crate::web::connection_runtime::{ConnectionRuntime, SOCKET_DRAIN_BOUND};
+use crate::web::store::WebStore;
+
+#[cfg(test)]
+pub(crate) fn test_pty_manager() -> Arc<PtyManager> {
+    let events = TerminalEventHub::standalone();
+    let cwd = Arc::new(CwdTracker::new(events.clone()));
+    let git = Arc::new(GitTracker::new(events.clone()));
+    let exit = Arc::new(ExitCodeTracker::new(events.clone()));
+    Arc::new(PtyManager::new(events, cwd, git, exit))
+}
+
+/// The base of the web OAuth redirect URI: `127.0.0.1` on the bound port,
+/// whatever the bind address, because authorization servers accept plain http
+/// only on loopback. A browser on the host machine reaches the callback
+/// directly only when the server listens on all interfaces or on loopback;
+/// any other browser pastes the address it landed on into
+/// `POST /mcp-servers/oauth/complete`. Desktop shared-live denies all OAuth
+/// control routes before this is read.
+fn oauth_redirect_base(addr: SocketAddr) -> String {
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+/// Bind and serve the standalone ACP HTTP server until SIGINT/SIGTERM.
+///
+/// `ws_relay` is the live [`WsRelaySink`] — passed to both `AcpManager::new`
+/// (as an event sink) and the router (so `/ws` can subscribe clients + replay
+/// cursors). On signal: drains Axum first (graceful shutdown), then kills all
+/// agent subprocesses via [`AcpManager::kill_all`]. Bind failures are returned
+/// to the caller. On serve error, agents are still killed before returning.
+///
+/// `registry` is the host's durable [`ProjectRegistry`] the router reads for
+/// `GET /projects` + project-root containment checks and writes through the
+/// project command service. The standalone binary opens it at startup from its
+/// projects file (`--projects-file` / `$WRANGL_PROJECTS_FILE` / the state-dir
+/// default); the desktop host builds its own once at setup and calls
+/// [`serve_router`] directly (it never reaches this `serve` wrapper).
+///
+/// `acp_catalog` is the host-owned [`AcpCatalogService`] for CAP-6 / Story 8 —
+/// resolves the trusted ACP catalog (OS/arch/runtime + per-agent status). The
+/// standalone binary opens it under `<service_account_state_dir>/acp-catalog`;
+/// the desktop host opens its own under `<app_data_dir>/acp-catalog`. `None`
+/// degrades to `ACP_CATALOG_UNAVAILABLE`.
+///
+/// `acp_install` is the host-owned [`AcpInstallService`] for CAP-6 / Story 9 —
+/// downloads + verifies (sha256) + extracts + atomically activates ACP agent
+/// archives resolved from the catalog. The standalone binary opens it under
+/// `<service_account_state_dir>/acp-registry-binaries`; the desktop host opens
+/// its own under `<app_data_dir>/acp-registry-binaries`. `None` degrades to
+/// `ACP_INSTALL_UNAVAILABLE`.
+///
+/// `store` is the host-owned [`WebStore`], opened by the caller AFTER the data
+/// locks are held (`wrangl-server` opens it under the state dir or
+/// `--store-file`); `serve` never opens a store itself (AD-14).
+///
+/// The standalone binary owns its agent lifetime end-to-end, so it kills agents
+/// on exit. The desktop-hosted shared-live path calls [`serve_router`] directly
+/// and must NOT kill the desktop's live agents — see [`serve_router`].
+#[allow(clippy::too_many_arguments)]
+pub async fn serve(
+    acp: Arc<AcpManager>,
+    pty: Arc<PtyManager>,
+    terminal_events: TerminalEventHub,
+    cwd_tracker: Arc<CwdTracker>,
+    git_tracker: Arc<GitTracker>,
+    exit_code_tracker: Arc<ExitCodeTracker>,
+    ws_relay: Arc<WsRelaySink>,
+    registry: Arc<crate::web::project_registry::ProjectRegistry>,
+    cfg: ServerConfig,
+    acp_catalog: Option<Arc<crate::acp::AcpCatalogService>>,
+    acp_install: Option<Arc<crate::acp::install::AcpInstallService>>,
+    store: Arc<WebStore>,
+    web_auth: Option<Arc<auth::WebAuth>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Idle agent reaper (standalone server; the desktop starts its own from
+    // `lib.rs` — see the module doc for why this is NOT in `serve_router`).
+    // The shutdown future resolves
+    // on SIGINT/SIGTERM OR when the router task finishes for any other reason
+    // (bind failure, panic, early exit) so `serve` never hangs waiting on a
+    // reaper whose signal can no longer arrive in-process.
+    let (reaper_stop_tx, reaper_stop_rx) = tokio::sync::oneshot::channel::<()>();
+    // A flag or env var locks the window. The 30-minute default stays open so
+    // Settings can change it.
+    agent_reaper::install_agent_idle_baseline(
+        cfg.agent_idle_window_secs,
+        crate::web::config::server_agent_idle_window_lock(&cfg),
+    );
+    let reaper_handle = agent_reaper::spawn_agent_idle_reaper(
+        acp.clone(),
+        agent_reaper::live_agent_idle_window,
+        Box::pin(async move {
+            tokio::select! {
+                _ = shutdown_signal_future() => {}
+                _ = reaper_stop_rx => {}
+            }
+        }),
+    );
+
+    crate::web::project_registry::install(registry.clone());
+
+    // The automation engine, like the reaper, belongs to this process and
+    // not to `serve_router`. Its data lives in the locked state dir.
+    let automation_engine = {
+        let roots_registry = registry.clone();
+        let project_roots: crate::automation::engine::ProjectRoots =
+            Arc::new(move |project_id| roots_registry.canonical_root(project_id));
+        let mcp_servers = crate::automation::mcp::store_servers(store.clone());
+        match crate::automation::service::AutomationService::open(
+            &cfg.service_account_state_dir(),
+            acp.clone(),
+            project_roots,
+            mcp_servers,
+        ) {
+            Ok(service) => {
+                let service = Arc::new(service);
+                let engine = service
+                    .engine()
+                    .start(&tokio::runtime::Handle::current());
+                tokio::spawn(crate::web::automation_api::forward_changes(
+                    service.subscribe(),
+                    ws_relay.clone(),
+                ));
+                crate::automation::service::install(service);
+                Some(engine)
+            }
+            Err(e) => {
+                error!("automations unavailable: {e}");
+                None
+            }
+        }
+    };
+
+    let host_allow = if web_auth.is_some() {
+        host_allow::HostAllowList::any()
+    } else {
+        info!("No bearer token: answering only IP literals, localhost and --allowed-origins hosts");
+        host_allow::HostAllowList::from_origins(&cfg.allowed_origins)
+    };
+
+    // gh-1105: the standalone `wrangl-server` exposes the `/server/config`
+    // reconfigure routes + the `/health` `setupRequired` flag — build the
+    // admin context BEFORE `cfg` is moved into `serve_router`. The desktop
+    // shared-live host calls `serve_router` directly and passes `None`.
+    let server_admin = Some(server_config_file::ServerAdminContext::from_config(&cfg));
+    let (_addr, handle) = serve_router(
+        acp.clone(),
+        pty.clone(),
+        terminal_events,
+        cwd_tracker,
+        git_tracker,
+        exit_code_tracker,
+        ws_relay,
+        registry,
+        cfg,
+        host_allow,
+        // Corral canvases save through their renderer's socket (AD-31), so
+        // they flush before the sockets are told to close.
+        async {
+            shutdown_signal_future().await;
+            crate::canvas::static_server::close_all_canvases_bounded().await;
+        },
+        acp_catalog,
+        acp_install,
+        store,
+        // Standalone binary is NOT shared-live — its admission path is the
+        // `--allow-remote-writes` opt-in, not a deployment-mode deny.
+        false,
+        web_auth,
+        server_admin,
+    )
+    .await?;
+
+    let serve_result = handle.await;
+
+    // Reap loop cleanup: signal it to stop (no-op if the OS signal already
+    // resolved its shutdown future) and join so a slow sweep cannot leak the
+    // task past serve's own cleanup path.
+    let _ = reaper_stop_tx.send(());
+    let _ = reaper_handle.await;
+    if let Some(engine) = &automation_engine {
+        engine.stop().await;
+    }
+
+    // Cleanup: always attempt ALL resource cleanup even if one step fails.
+    // PTY cleanup must not be skipped because ACP persistence errored.
+    let mut cleanup_errors: Vec<Box<dyn std::error::Error + Send + Sync>> = Vec::new();
+
+    // Order is load-bearing (#842 / #880): `kill_all_checked` stops agents
+    // and leaves session writers installed. `shutdown_persistence` then
+    // drains each writer, appends the interrupted marker for an open turn,
+    // and persists status closed. A single-agent kill does not take this
+    // path and does not write that marker.
+    if let Err(e) = acp.kill_all_checked().await {
+        let e: Box<dyn std::error::Error + Send + Sync> = e.into();
+        log::error!("[wrangl-server] ACP kill_all failed during shutdown: {e}");
+        cleanup_errors.push(e);
+    }
+    if let Err(e) = acp.shutdown_persistence().await {
+        let e: Box<dyn std::error::Error + Send + Sync> = e.into();
+        log::error!("[wrangl-server] ACP persistence shutdown failed: {e}");
+        cleanup_errors.push(e);
+    }
+    // PTY cleanup always runs — never skip terminal process-tree kill.
+    pty.kill_all().await;
+
+    if let Some(first) = cleanup_errors.into_iter().next() {
+        return Err(first);
+    }
+
+    match serve_result {
+        Ok(()) => {
+            info!("wrangl-server stopped");
+            Ok(())
+        }
+        Err(join_err) if join_err.is_cancelled() => {
+            warn!("wrangl-server serve task cancelled");
+            Ok(())
+        }
+        Err(join_err) => Err(Box::new(join_err)),
+    }
+}
+
+/// Bind the Axum router and spawn the serve loop with an external shutdown.
+///
+/// Binds the listener synchronously (so the caller learns the bound address
+/// before serving starts), warns when `dist-web/` is missing, then spawns the
+/// `axum::serve` loop on the current runtime. The returned [`JoinHandle`]
+/// completes when the server has drained on shutdown or errored; the bound
+/// [`SocketAddr`] is returned immediately so the host manager can build the
+/// URL without waiting for the server to stop.
+///
+/// **Does NOT call `kill_all`** — the caller owns the agent-lifetime decision.
+/// The standalone binary wraps this + adds `kill_all` in [`serve`]; the
+/// desktop-hosted shared-live server (`remote/host.rs`) calls this directly so
+/// toggling the server off never kills the desktop's live agents.
+///
+/// `store` is the host's already-opened [`WebStore`]. `serve_router` never
+/// opens or locks one: the desktop shared-live host passes the single
+/// instance opened once in `lib.rs` under `app_data_dir`, so stop/start
+/// cycles reuse it (AD-14).
+///
+/// `web_auth` is the token gate threaded into the router + `/ws` +
+/// `/terminal/ws`. `None` keeps every endpoint ungated (loopback-only hosts);
+/// the desktop shared-live host passes `Some` whenever it advertises a tunnel
+/// or binds beyond loopback (AD-3).
+///
+/// `host_allow` is the `Host` allow-list the router enforces.
+///
+/// `server_admin` is the standalone server's host-administration context
+/// (gh-1105): `Some` enables the `/server/config` reconfigure routes and the
+/// `/health` `setupRequired` probe. `web::serve` builds it from the merged
+/// config; the desktop shared-live host (`remote/host.rs`) passes `None` so
+/// those routes are never registered.
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_router(
+    acp: Arc<AcpManager>,
+    pty: Arc<PtyManager>,
+    terminal_events: TerminalEventHub,
+    cwd_tracker: Arc<CwdTracker>,
+    git_tracker: Arc<GitTracker>,
+    exit_code_tracker: Arc<ExitCodeTracker>,
+    ws_relay: Arc<WsRelaySink>,
+    registry: Arc<crate::web::project_registry::ProjectRegistry>,
+    cfg: ServerConfig,
+    host_allow: host_allow::HostAllowList,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+    acp_catalog: Option<Arc<crate::acp::AcpCatalogService>>,
+    acp_install: Option<Arc<crate::acp::install::AcpInstallService>>,
+    store: Arc<WebStore>,
+    shared_live_writes_denied: bool,
+    web_auth: Option<Arc<auth::WebAuth>>,
+    server_admin: Option<server_config_file::ServerAdminContext>,
+) -> Result<(SocketAddr, JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
+    let bind_addr = cfg.bind_addr().ok_or_else(|| {
+        format!(
+            "invalid host '{}': use 127.0.0.1 (default) or 0.0.0.0 (expose)",
+            cfg.host
+        )
+    })?;
+
+    let listener = TcpListener::bind(bind_addr).await?;
+    let addr = listener.local_addr()?;
+    let owned_port = crate::host_perimeter::OwnedPort::claim(addr.port());
+    info!("ACP web server listening on http://{}", addr);
+
+    // Only warn when NEITHER the on-disk `dist-web/` (dev) NOR the embedded
+    // bundle (release binary) can serve the UI — a shipped binary embeds the UI
+    // even though the compile-time `dist-web/` path does not exist on disk.
+    if !assets::web_ui_available() {
+        warn!(
+            "dist-web/index.html not found at {:?} — run `bun run build:web` before browsing; \
+             /health still works, static routes will 404",
+            assets::dist_web_dir()
+        );
+    }
+
+    // Advertise `Server` history mode when the host-owned file-backed
+    // `SessionPersistence` is attached to the relay (both desktop shared-live
+    // and the standalone VPS attach it now — CAP-2). Otherwise the web client
+    // negotiates `live_only` (no stored transcript mirror).
+    let history_mode = if ws_relay.persistence().is_some() {
+        HistoryMode::Server
+    } else {
+        HistoryMode::LiveOnly
+    };
+    // The boundary is "inside any registered project"; there is no single host
+    // project root. Only the removed `--project-root` flag (or its
+    // `$WRANGL_PROJECT_ROOT` fallback) seeds one in-memory project, and only
+    // while the registry has no usable project — a registry with real
+    // projects ignores it. The desktop host never passes one.
+    if let Some(seed_root) = cfg.seed_project_root.as_deref() {
+        registry.seed_root_if_no_usable_project(seed_root);
+        if !registry.is_within_any_registered_root(seed_root) {
+            warn!(
+                "configured project root '{}' is not inside any registered project; \
+                 git/worktree/search/skills/canvas and remote /fs writes only accept \
+                 registered project roots",
+                seed_root.display()
+            );
+        }
+    }
+    // AD-19: one shutdown handle + overflow tolerance for every socket this
+    // host upgrades.
+    let connections = ConnectionRuntime::from_config(&cfg);
+    // A serve start is a new host epoch for the watch hub: a client that sees
+    // the epoch change rebuilds its watched state from a fresh full-state frame.
+    ws_relay.watches().renew_epoch();
+    info!(target: "wrangl::web::watch", "watch hub host epoch renewed for this serve start");
+    let store_for_gc = Arc::clone(&store);
+    // Every change of a project's terminal set reaches its `terminals` watchers.
+    crate::web::watch::attach_terminal_set_observer(&pty, &ws_relay);
+    let socket_shutdown = connections.shutdown.clone();
+    let app = router::router(
+        Arc::clone(&acp),
+        pty,
+        terminal_events,
+        cwd_tracker,
+        git_tracker,
+        exit_code_tracker,
+        Arc::clone(&ws_relay),
+        Arc::clone(&registry),
+        history_mode,
+        acp_catalog,
+        acp_install,
+        Some(store),
+        cfg.allow_remote_writes,
+        shared_live_writes_denied,
+        oauth_redirect_base(addr),
+        web_auth,
+        cfg.allowed_origins.clone(),
+        host_allow,
+        connections,
+        server_admin,
+    );
+
+    // Stale device partitions are swept daily while this host serves; the
+    // task stops with it (the desktop shared-live host starts and stops).
+    let store_gc = store::spawn_gc_task(store_for_gc, Arc::clone(ws_relay.presence()));
+    let handle = tokio::spawn(async move {
+        let _owned_port = owned_port;
+        // Patch D: `into_make_service_with_connect_info::<SocketAddr>()` so
+        // the fs WRITE routes can extract `ConnectInfo<SocketAddr>` for the
+        // localhost-only guard. Read routes and `/ws` are unaffected.
+        //
+        // Axum's graceful shutdown only drains plain HTTP requests: an
+        // upgraded socket is handed to a detached task. So the stop signal
+        // also tells every admitted `/ws` + `/terminal/ws` socket to close
+        // (`Close(1001)`), and the task below awaits them before it reports
+        // the server stopped.
+        let begin_socket_shutdown = socket_shutdown.clone();
+        let serve_result = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            begin_socket_shutdown.begin();
+        })
+        .await
+        .inspect_err(|e| error!("ACP web server error: {}", e));
+
+        // Also reached when the server errored rather than being stopped.
+        socket_shutdown.begin();
+        let stragglers = socket_shutdown.drain(SOCKET_DRAIN_BOUND).await;
+        if stragglers > 0 {
+            error!("ACP web server stopped with {stragglers} socket task(s) still running");
+        }
+
+        store_gc.abort();
+        match serve_result {
+            Ok(()) => info!("ACP web server stopped"),
+            Err(e) => error!("ACP web server stopped with error: {}", e),
+        }
+    });
+
+    Ok((addr, handle))
+}
+
+/// Build the shutdown-signal future for the standalone binary path.
+///
+/// Waits for Ctrl-C (SIGINT) or, on Unix, SIGTERM. On signal-handler setup
+/// failure, parks forever rather than completing (which would stop the server
+/// immediately). The desktop-hosted path uses an `oneshot`-driven shutdown
+/// instead.
+async fn shutdown_signal_future() {
+    match shutdown_signal().await {
+        Ok(()) => info!("wrangl-server shutting down…"),
+        Err(e) => {
+            warn!("shutdown signal setup failed ({e}); serving until process exit");
+            // Do not complete the shutdown future — that would stop the
+            // server immediately. Park until the process is killed.
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+/// Wait for Ctrl-C (SIGINT) or, on Unix, SIGTERM.
+///
+/// Returns `Err` if signal handlers cannot be installed (no `expect`/`unwrap`).
+async fn shutdown_signal() -> Result<(), std::io::Error> {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = ctrl_c => result?,
+            _ = sigterm.recv() => {},
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Windows: Ctrl-C / console ctrl handler via tokio. SIGTERM is not a
+        // portable Win32 signal; service-stop is out of scope for this scaffold.
+        ctrl_c.await
+    }
+}

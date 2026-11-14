@@ -1,0 +1,14 @@
+[package]
+name = "corral-pathops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corral path operations: booleans (union, subtract, intersect, exclude), outline stroke with inside/center/outside alignment, arrowheads"
+
+[lints]
+workspace = true
+
+[dependencies]
+corral-geom = { workspace = true }
+corral-doc = { workspace = true }
+linesweeper = { workspace = true }

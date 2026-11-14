@@ -1,0 +1,188 @@
+---
+title: Install and start wrangl-server
+description: Run Wrangl on a server and open it from any browser.
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps'
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs'
+
+`wrangl-server` is Wrangl without a window. It runs your agents, terminals and git on one machine and serves the Wrangl app to any browser that connects to it. Use it on a home server, a cloud machine, or your own computer.
+
+## Install the server
+
+You can install the server as a single program file or run it in Docker.
+
+<Tabs items={['Linux binary', 'Docker']}>
+<Tab value="Linux binary">
+
+Release builds are for Linux on x64 and arm64. Download the one that matches your machine:
+
+```bash
+case "$(uname -m)" in
+	x86_64)        asset=wrangl-server ;;
+	aarch64|arm64) asset=wrangl-server-linux-aarch64 ;;
+	*) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+curl -fL -o wrangl-server "https://github.com/wrangl-dev/wrangl/releases/latest/download/$asset"
+chmod +x wrangl-server
+```
+
+The builds need glibc 2.35 or newer, which Ubuntu 22.04 and later have. Distributions that use musl instead of glibc, such as Alpine, aren't supported.
+
+The link above gets the latest stable release. For the nightly build, download from `https://github.com/wrangl-dev/wrangl/releases/download/nightly/$asset` instead.
+
+Move the file to a folder on your `PATH`, such as `~/.local/bin`, so you can run `wrangl-server` from anywhere.
+
+</Tab>
+<Tab value="Docker">
+
+The Wrangl repository has a `Dockerfile` and a `docker-compose.yml`. The image is `ghcr.io/wrangl-dev/wrangl-server`.
+
+1. Copy `docker-compose.yml` from the Wrangl repository into a new folder.
+2. In that folder, create the folder for your projects:
+
+	```bash
+	mkdir -p workspace
+	```
+
+3. Start the container:
+
+	```bash
+	docker compose up -d
+	```
+
+4. Read the access token:
+
+	```bash
+	docker compose exec wrangl-server cat /home/wrangl/.local/state/wrangl/web-auth-token
+	```
+
+5. Open `http://localhost:8080/#token=<token>` in your browser, with the token in place of `<token>`.
+6. Add `/workspace`, or a folder inside it, as a project.
+
+Things to know about the container:
+
+- The server can see only the `workspace` folder. Your projects must be inside it.
+- The port is open on `127.0.0.1` only. To reach it from other devices, put an HTTPS reverse proxy in front of it. See [Put a reverse proxy in front](/docs/remote/server-options#put-a-reverse-proxy-in-front).
+- The compose file turns on remote changes (`WRANGL_SERVER_ALLOW_REMOTE_WRITES=true`), because browser traffic reaches the container from the Docker network, not from the container itself.
+- The image has no agent programs such as Claude Code or Codex. Install them into `/home/wrangl/.local/bin` inside the container. That folder is on the `PATH` and is kept between restarts.
+- The user inside the container has user ID 1000. If your own user ID is different, build the image with yours before the first start: `WRANGL_UID=$(id -u) WRANGL_GID=$(id -g) docker compose up -d --build`.
+- To set your own token, put `WRANGL_WEB_AUTH_TOKEN=<token>` in a `.env` file next to `docker-compose.yml`.
+
+To update, pull the new image and restart:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+To follow the nightly builds, set `WRANGL_IMAGE=ghcr.io/wrangl-dev/wrangl-server:nightly` in `.env`.
+
+</Tab>
+</Tabs>
+
+## Set it up in the browser
+
+A fresh `wrangl-server` has no settings yet, so the first run serves a setup page instead of the app. While it waits for you, the server listens on every network interface, so you can open the page from another device.
+
+<Steps>
+<Step>
+
+### Start the server
+
+Run this in a terminal on the server:
+
+```bash
+wrangl-server
+```
+
+The server prints a setup link to the terminal, or to the service's journal, and waits:
+
+```text
+http://<server-address>:8080/?setup=<token>
+```
+
+The `?setup=` part is a one-time key for this run. Without it the setup page stays closed, so only someone who can read the server's output can finish the setup.
+
+</Step>
+<Step>
+
+### Answer the questions
+
+Open the link in a browser. The setup page asks for:
+
+- **Bind host.** Keep `127.0.0.1` to allow only this machine, for example behind a reverse proxy. Pick `0.0.0.0` to accept connections from other devices.
+- **Bind port.** The default is `8080`.
+- **Allow changes from other devices.** Shown when the host is `0.0.0.0`. Turn it on to let other devices make changes. See [Allow changes from other devices](/docs/remote/server-options#allow-changes-from-other-devices).
+- **Update channel.** `stable`, `insider`, `nightly`, or `none`. See [Update the server](/docs/remote/server-options#update-the-server).
+
+The **Advanced** section holds the **sessions directory** (where Wrangl keeps chat history), the **projects registry file** (your project list), and how often the server checks for updates. The defaults are in `~/.local/state/wrangl`.
+
+The page checks each answer and shows mistakes next to its field, so nothing is saved until everything is valid.
+
+</Step>
+<Step>
+
+### Let the server restart
+
+Applying saves your answers to `server-config.json` in the server's state folder. The server restarts itself on the address you picked, your browser follows it there, and you land in the normal Wrangl app.
+
+When the host is `0.0.0.0`, the server also creates an access token and hands it to your browser on the way. Other browsers and devices still need it. See [The access token](/docs/remote/server-options#the-access-token).
+
+</Step>
+</Steps>
+
+To change these settings later, open **Settings** in the browser (`Alt+,`) and select **Server**. It is the same page filled in with the current settings. Applying them saves the file and restarts the server again, and the browser follows when the address changes. The **Server** tab is in the browser version only.
+
+For the settings it holds, `server-config.json` wins over flags and environment variables, so reconfiguring works even on a server whose service still passes old flags. If the file ever becomes unreadable, the server logs an error and goes back to the setup page instead of locking you out.
+
+### Set it up in the terminal instead
+
+`wrangl-server onboard` asks the same questions in a terminal and writes the same `server-config.json` — both paths produce identical settings. Use it for scripted or headless installs, or when you want the wizard to install the server as a service so it keeps running after you log out of SSH:
+
+```bash
+wrangl-server onboard
+```
+
+Press Enter at any question to keep the default shown in brackets. When the wizard finishes, it starts the server and prints its address, how to read the logs, and how to stop it.
+
+The wizard may also offer to write a settings file, `wrangl-server.env`, in the state folder. Answer `y` so the background server gets the same settings.
+
+On machines with systemd, the wizard installs a `wrangl-server` service. When you run it as root, it is a system service and you manage it with `systemctl stop wrangl-server` and `journalctl -u wrangl-server -f`. As another user, it is a user service, so add `--user` to both commands.
+
+On machines without systemd, the wizard starts the server as a background process. The log is `wrangl-server.log` and the process ID is in `wrangl-server.pid`, both in the state folder. A background process doesn't restart after a crash or a reboot.
+
+## Start the server by hand
+
+To try the server, run it in the foreground:
+
+```bash
+wrangl-server
+```
+
+On a server that is already set up, this serves Wrangl at `http://localhost:8080` for browsers on the same machine. On a fresh install it starts the setup page described above instead. Press `Ctrl+C` to stop it.
+
+To let phones and other computers connect, listen on all network interfaces:
+
+```bash
+wrangl-server --host 0.0.0.0 --port 8080
+```
+
+Flags such as `--host` and `--port` count as a configuration, so a fresh install started this way skips the setup page. Once a `server-config.json` exists it wins over these flags for the settings it holds — change those under **Settings**, in the **Server** tab, instead. Flags the file doesn't cover, such as `--allowed-origins`, still apply.
+
+The first time the server listens on `0.0.0.0` without a token, it creates an access token and prints the path of the file that holds it. Read the token from that file, then open `http://<server-address>:8080/#token=<token>`. See [The access token](/docs/remote/server-options#the-access-token).
+
+Plain `http://` sends the token and everything else unencrypted over the network. Use it only on a network you trust. For anything else, put an HTTPS reverse proxy in front of the server.
+
+## Add your first project
+
+A new server has no projects.
+
+1. Open the server's address in a browser.
+2. Click **+** next to **PROJECTS**, then click **New project**. You can also press `Alt+N`.
+3. Click **Browse**. Wrangl opens a folder picker that shows the folders on the server, not on your own device.
+4. Go to the project folder and select it, then create the project.
+
+The server saves the project in its projects file, so it is still there after the server restarts.
+
+For the rest of the project setup, see [Getting started](/docs/getting-started).

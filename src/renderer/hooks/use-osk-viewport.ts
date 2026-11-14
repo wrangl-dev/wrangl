@@ -1,0 +1,313 @@
+/**
+ * Story 5.3 — `visualViewport`-aware on-screen-keyboard (OSK) hook.
+ *
+ * Subscribes to `window.visualViewport` `resize` AND `scroll` events (both
+ * required for iOS Safari, which scrolls the visual viewport upward instead
+ * of resizing the layout viewport like Android Chrome 108+).
+ *
+ * Why both events:
+ * - iOS Safari: `visualViewport.height` shrinks AND `offsetTop` increases.
+ *   `window.resize` does NOT fire on iOS for OSK open/close. We need both
+ *   `resize` and `scroll` events on `visualViewport` itself.
+ * - Android Chrome 108+ with `interactive-widget=resizes-content`: the
+ *   layout viewport shrinks (`window.innerHeight` decreases), `visualViewport
+ *   .offsetTop` stays 0. `visualViewport.resize` fires.
+ *
+ * Current-values spacer (#852): `keyboardHeight = max(0, window.innerHeight
+ * - visualViewport.height)` where BOTH values are read at the same instant —
+ * deliberately NOT a pre-OSK baseline. On Android Chrome with
+ * `interactive-widget=resizes-content` the layout viewport already shrank to
+ * sit on top of the keyboard, so `innerHeight ≈ visualViewport.height` and
+ * the spacer collapses to ~0: the keyboard height is NOT compensated a
+ * second time (the old pre-OSK baseline formula returned the full keyboard
+ * height again on top of the shrunken layout, collapsing the chat transcript
+ * behind a giant gap). On iOS Safari (and on Android without the meta /
+ * with `resizes-visual`), the layout viewport does NOT shrink, so the
+ * difference IS the keyboard height and the spacer is genuinely needed.
+ *
+ * Capability guard: `window.visualViewport` has 95%+ global support (caniuse)
+ * but is absent in older mobile Safari/WebView and in jsdom without a stub.
+ * Guard `typeof window === 'undefined' || !window.visualViewport` and return
+ * a no-OSK default so the hook never throws on Tauri desktop or older
+ * browsers. Mirrors the capability-guard pattern from `theme-appearance.ts`
+ * (Story 5.1 lesson).
+ *
+ * CSS var: mirrors `keyboardHeight` to `--wrangl-keyboard-height` on
+ * `document.documentElement` so consumers can size OSK-aware spacers via CSS
+ * without re-reading React state (CSS viewport units `vh`/`dvh` ignore the
+ * OSK — see Dev Notes anti-patterns).
+ *
+ * Throttle: `resize` and `scroll` fire rapidly during OSK open/close
+ * transitions. Coalesce via `requestAnimationFrame` to avoid layout thrash.
+ */
+
+import { useEffect, useState } from 'react'
+import { logFrontendError } from '@/lib/log-api'
+
+export interface OskState {
+  /** Current visual-viewport height in CSS pixels. */
+  height: number
+  /** Current visual-viewport top offset (iOS scrolls upward when OSK opens). */
+  offsetTop: number
+  /** True when the OSK is open (spacer height positive or iOS offsetTop > 0). */
+  isOskOpen: boolean
+  /**
+   * OSK spacer height in CSS pixels: `max(0, layoutViewportHeight -
+   * visualViewport.height)` with both values read at the same instant. ~0
+   * when the layout viewport already shrank onto the keyboard (Android
+   * `resizes-content`); the full keyboard height when it did not (iOS, or
+   * Android `resizes-visual`). Consumers add this as bottom padding so the
+   * composer clears the keys — see #852.
+   */
+  keyboardHeight: number
+}
+
+const NO_OSK: OskState = {
+  height: 0,
+  offsetTop: 0,
+  isOskOpen: false,
+  keyboardHeight: 0
+}
+
+/**
+ * Pure helper for unit tests and non-React callers. No DOM access — callers
+ * pass the CURRENT layout-viewport height (`window.innerHeight`, read at the
+ * same instant as the visual viewport) and the live `VisualViewport` (or
+ * null).
+ *
+ * `keyboardHeight = max(0, layoutViewportHeight - vv.height)`.
+ *
+ * `isOskOpen` is true when either the spacer height is positive OR the
+ * visual viewport has scrolled upward (iOS `offsetTop > 0`).
+ */
+export function resolveOskState(layoutViewportHeight: number, vv: VisualViewport | null): OskState {
+  if (!vv) {
+    return {
+      height: layoutViewportHeight,
+      offsetTop: 0,
+      isOskOpen: false,
+      keyboardHeight: 0
+    }
+  }
+  const height = vv.height
+  const offsetTop = vv.offsetTop
+  const keyboardHeight = Math.max(0, layoutViewportHeight - height)
+  const isOskOpen = keyboardHeight > 0 || offsetTop > 0
+  return { height, offsetTop, isOskOpen, keyboardHeight }
+}
+
+/** How long after a close to measure again: the layout can settle after the last viewport event. */
+const CLOSE_RECHECK_MS = 600
+
+type OskTrigger = 'mount' | 'vv-resize' | 'vv-scroll' | 'window-resize' | 'close-recheck'
+
+// Module-level so the hook's several consumers log each transition once.
+let lastLoggedOpen: boolean | null = null
+let settledCloseLogPending = false
+/**
+ * The field that had focus when the keyboard opened: the one that raised it.
+ * Weak, so a chat closed while the keyboard is up does not stay in memory.
+ */
+let keyboardFocusTarget: WeakRef<Element> | null = null
+
+/** What a keyboard close found and fixed, for the log. */
+interface ScrollRepair {
+  /** Bottom edge of the focused field before the reset: far above `inner` = stuck high. */
+  focusBottom: number
+  /** `element:offset` for each ancestor offset that was reset. */
+  reset: string[]
+}
+
+function describeElement(el: Element): string {
+  const slot = el.getAttribute('data-slot')
+  if (slot) return `${el.tagName.toLowerCase()}[${slot}]`
+  const classes = typeof el.className === 'string' ? el.className.trim().split(/\s+/) : []
+  return [el.tagName.toLowerCase(), ...classes.slice(0, 4)].join('.')
+}
+
+/**
+ * Focusing a field scrolls every ancestor that can hold an offset to bring the
+ * field into view, `overflow: hidden` ones included, and nothing scrolls those
+ * back when the keyboard closes: the composer then stays high above an empty
+ * band. Reset the offsets left on `overflow: hidden` ancestors of `from`. Real
+ * scrollers (`auto` / `scroll`) and the page keep their position. Returns what
+ * was reset, as `element:offset` entries for the log.
+ */
+export function resetClippedScroll(from: Element): string[] {
+  const reset: string[] = []
+  for (let el = from.parentElement; el; el = el.parentElement) {
+    if (el.scrollTop === 0 || getComputedStyle(el).overflowY !== 'hidden') continue
+    reset.push(`${describeElement(el)}:${Math.round(el.scrollTop)}`)
+    el.scrollTop = 0
+  }
+  return reset
+}
+
+/** The field to repair from: the one focused now, else the one that raised the keyboard. */
+function repairTarget(): Element | null {
+  const active = document.activeElement
+  if (active && active !== document.body && active !== document.documentElement) return active
+  const saved = keyboardFocusTarget?.deref()
+  return saved?.isConnected ? saved : null
+}
+
+function repairClippedScroll(): ScrollRepair | null {
+  const target = repairTarget()
+  if (!target) return null
+  const focusBottom = Math.round(target.getBoundingClientRect().bottom)
+  return { focusBottom, reset: resetClippedScroll(target) }
+}
+
+function describeViewport(
+  state: OskState,
+  trigger: OskTrigger,
+  repair: ScrollRepair | null
+): string {
+  const standalone =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(display-mode: standalone)').matches
+  const parts = [
+    `trigger=${trigger}`,
+    `open=${state.isOskOpen}`,
+    `keyboard=${Math.round(state.keyboardHeight)}`,
+    `inner=${window.innerHeight}`,
+    `vv=${Math.round(state.height)}`,
+    `vvTop=${Math.round(state.offsetTop)}`,
+    `client=${document.documentElement.clientHeight}`,
+    `screen=${window.screen?.height ?? 0}`,
+    `standalone=${standalone}`
+  ]
+  if (repair) parts.push(`focusBottom=${repair.focusBottom}`)
+  if (repair && repair.reset.length > 0) parts.push(`reset=${repair.reset.join(',')}`)
+  return parts.join(' ')
+}
+
+/**
+ * Boundary log for keyboard open/close, so a layout stuck after the keyboard
+ * closes can be read from the server log: which event ended the open state
+ * and what the viewport measured then.
+ */
+function logOskTransition(state: OskState, trigger: OskTrigger, repair: ScrollRepair | null): void {
+  if (trigger === 'close-recheck') {
+    if (!settledCloseLogPending) return
+    settledCloseLogPending = false
+  } else {
+    if (lastLoggedOpen === state.isOskOpen) return
+    lastLoggedOpen = state.isOskOpen
+    settledCloseLogPending = !state.isOskOpen
+  }
+  void logFrontendError({
+    level: 'info',
+    source: 'osk-viewport',
+    message: describeViewport(state, trigger, repair)
+  })
+}
+
+function writeKeyboardHeightVar(keyboardHeight: number): void {
+  if (typeof document === 'undefined' || !document.documentElement) return
+  document.documentElement.style.setProperty('--wrangl-keyboard-height', `${keyboardHeight}px`)
+}
+
+/**
+ * React hook returning the current OSK state. Subscribes to
+ * `window.visualViewport` `resize` + `scroll` (both required for iOS).
+ *
+ * Returns a no-OSK default on Tauri desktop / older browsers without
+ * `visualViewport`. See module docstring for the capability guard rationale.
+ *
+ * Side effect: mirrors `keyboardHeight` to the `--wrangl-keyboard-height` CSS
+ * custom property on `document.documentElement` so CSS-only consumers (e.g.
+ * the chat-message-list spacer) can react without re-rendering React.
+ */
+export function useOskViewport(): OskState {
+  const [state, setState] = useState<OskState>(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) {
+      return { ...NO_OSK, height: window?.innerHeight ?? 0 }
+    }
+    return resolveOskState(window.innerHeight, window.visualViewport)
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return
+    const vv = window.visualViewport
+    let rafId: number | null = null
+    let recheckId: ReturnType<typeof setTimeout> | null = null
+    let pendingTrigger: OskTrigger = 'mount'
+    let wasOpen: boolean | null = null
+
+    const apply = (): void => {
+      rafId = null
+      const trigger = pendingTrigger
+      // #852: read `window.innerHeight` LIVE at apply time — no pre-OSK
+      // baseline. On Android Chrome with `interactive-widget=resizes-content`
+      // the layout viewport shrinks onto the keyboard together with the
+      // visual viewport, so the difference collapses to ~0 and the
+      // consumers' spacer stops double-compensating. On iOS Safari (and
+      // Android without resizes-content) `innerHeight` is unaffected by the
+      // OSK and the difference is the real keyboard height. Orientation
+      // changes while the OSK is open are handled for free: both values are
+      // re-read together on every event.
+      const next = resolveOskState(window.innerHeight, vv)
+      writeKeyboardHeightVar(next.keyboardHeight)
+      setState(next)
+      // A pinch-zoom also shrinks the visual viewport; only a keyboard opened
+      // at scale 1 arms the close repair.
+      if (next.isOskOpen && wasOpen !== true && vv.scale === 1) {
+        const active = document.activeElement
+        keyboardFocusTarget = active && active !== document.body ? new WeakRef(active) : null
+      }
+      const closing = !next.isOskOpen && (trigger === 'close-recheck' || wasOpen === true)
+      const repair = closing && keyboardFocusTarget ? repairClippedScroll() : null
+      if (trigger === 'close-recheck') {
+        logOskTransition(next, trigger, repair)
+        if (!next.isOskOpen) keyboardFocusTarget = null
+      } else if (wasOpen !== next.isOskOpen) {
+        logOskTransition(next, trigger, repair)
+        if (recheckId !== null) {
+          clearTimeout(recheckId)
+          recheckId = null
+        }
+        if (wasOpen && !next.isOskOpen) {
+          recheckId = setTimeout(() => {
+            recheckId = null
+            scheduleApply('close-recheck')
+          }, CLOSE_RECHECK_MS)
+        }
+      }
+      wasOpen = next.isOskOpen
+    }
+
+    const scheduleApply = (trigger: OskTrigger): void => {
+      pendingTrigger = trigger
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(apply)
+    }
+    const onVvResize = (): void => scheduleApply('vv-resize')
+    const onVvScroll = (): void => scheduleApply('vv-scroll')
+    // The layout viewport can change without a visual-viewport event (the
+    // keyboard closing in an installed Android app), which left the spacer stale.
+    const onWindowResize = (): void => scheduleApply('window-resize')
+
+    // Both `resize` and `scroll` are required for iOS Safari compatibility
+    // (iOS scrolls the visual viewport upward; `resize` alone misses the
+    // early scroll phase of the OSK-open transition).
+    vv.addEventListener('resize', onVvResize)
+    vv.addEventListener('scroll', onVvScroll)
+    window.addEventListener('resize', onWindowResize)
+
+    // Capture initial state in case the OSK was already open at mount.
+    scheduleApply('mount')
+
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      if (recheckId !== null) clearTimeout(recheckId)
+      vv.removeEventListener('resize', onVvResize)
+      vv.removeEventListener('scroll', onVvScroll)
+      window.removeEventListener('resize', onWindowResize)
+      // Reset the CSS var so it doesn't leak into non-OSK contexts.
+      writeKeyboardHeightVar(0)
+    }
+  }, [])
+
+  return state
+}

@@ -1,0 +1,45 @@
+# The subset of craft-libs that Corral builds against, vendored for Wrangl.
+# Only the crates Corral's workspace resolves are kept; license notices are in
+# src-tauri/resources/licenses/craft-libs.md.
+[workspace]
+resolver = "3"
+members = [
+  "crates/atomic",
+  "crates/docpath",
+  "crates/font-catalog",
+  "crates/font-store",
+  "crates/fonts-build",
+  "crates/i18n",
+  "crates/ui",
+]
+exclude = ["krilla"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[workspace.dependencies]
+craft-atomic = { path = "crates/atomic" }
+craft-docpath = { path = "crates/docpath" }
+craft-font-catalog = { path = "crates/font-catalog" }
+craft-font-store = { path = "crates/font-store" }
+craft-fonts-build = { path = "crates/fonts-build" }
+craft-i18n = { path = "crates/i18n" }
+craft-ui = { path = "crates/ui" }
+egui = { version = "0.37", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"

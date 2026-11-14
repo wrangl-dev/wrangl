@@ -1,0 +1,2 @@
+# Core fonts the Corral web build embeds (Noto Sans Georgian). Same format as latin-manifest.txt.
+Noto Sans Georgian | Regular | fonts/noto-sans-georgian/NotoSansGeorgian.ttf | Geor | OFL-1.1 | fonts/noto-sans-georgian/OFL.txt | dc591156f36842d38996c4a7a17fee9bb58e45da3e2cac7a31b7d33de700adb9 | https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notosansgeorgian

@@ -1,0 +1,2 @@
+Wrangl app mark ("W_"): wrangl.svg (drawn from studio/src/brand.js) and wrangl-64.png (rendered
+from studio/out/AppIcon.png). It replaces the original Corral app icon in this vendored copy.

@@ -1,0 +1,19 @@
+{
+  "title": "Wrangl",
+  "pages": [
+    "index",
+    "getting-started",
+    "terminals",
+    "files",
+    "git",
+    "agents",
+    "agent-setup",
+    "automations",
+    "ssh",
+    "remote",
+    "server-api",
+    "browser",
+    "settings",
+    "troubleshooting"
+  ]
+}

@@ -124,10 +124,30 @@ jobs:
             --repo wrangl-dev/wrangl \
             --clobber
 
+  # No tap token means no Homebrew tap yet: skip the cask instead of failing
+  # the release (SHA256SUMS above is what the install scripts need).
+  tap_token:
+    name: Check Homebrew tap token
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -n "$HOMEBREW_TAP_TOKEN" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::HOMEBREW_TAP_TOKEN not set; skipping the Homebrew cask update."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
   homebrew:
     name: Update Homebrew cask
-    needs: [release_metadata, checksums]
-    if: needs.release_metadata.outputs.is_prerelease == 'false'
+    needs: [release_metadata, checksums, tap_token]
+    if: needs.release_metadata.outputs.is_prerelease == 'false' && needs.tap_token.outputs.present == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner

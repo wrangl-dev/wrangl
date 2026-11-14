@@ -1,4 +1,5 @@
 import { useReducedMotion } from '../../lib/useReducedMotion';
+import { InstallCommand } from '../ui/InstallCommand';
 import { ProductCta } from '../ui/ProductCta';
 import { agents } from '../../data/agents';
 import { AgentsHubVideo } from '../ui/AgentsHubVideo';
@@ -23,6 +24,7 @@ export const Hero = () => {
               snapshots, and a clean tabbed interface.
             </p>
             <ProductCta variant="hero" />
+            <InstallCommand />
           </div>
         </div>
 

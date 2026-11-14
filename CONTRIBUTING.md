@@ -193,7 +193,7 @@ Update signing is secured with a minisign keypair. The public key is embedded in
 
 **Important**: If you need to rotate signing keys, follow the procedure documented in [docs/auto-update-release-verification.md](docs/auto-update-release-verification.md#key-rotation-procedure). The key rotation must ship the new public key in a release signed with the old key BEFORE rotating the private key in CI, otherwise existing users will fail to verify future updates.
 
-Current key ID: `6E47FAD95783D992`
+Current key ID: `906F8AFB737E4647`
 
 ## Questions?
 

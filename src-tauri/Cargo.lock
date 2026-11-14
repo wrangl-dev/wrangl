@@ -9623,7 +9623,7 @@ dependencies = [
 
 [[package]]
 name = "wrangl-manager"
-version = "0.4.60"
+version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

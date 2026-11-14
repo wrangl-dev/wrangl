@@ -2,7 +2,7 @@
 	"$schema": "https://schema.tauri.app/config/2",
 	"productName": "Wrangl",
 	"mainBinaryName": "wrangl",
-	"version": "0.4.60",
+	"version": "0.1.0",
 	"identifier": "dev.wrangl.app",
 	"build": {
 		"beforeDevCommand": "npx vite --config vite.config.tauri.ts",
@@ -43,7 +43,7 @@
 		},
 		"updater": {
 			"active": true,
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZFNDdGQUQ5NTc4M0Q5OTIKUldTUzJZTlgyZnBIYmdObmg3dFc0QS9PN3F5N2Y5dUNoTy94dWcvTmNxam10Y25tS240dm0ySnYK",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwNkY4QUZCNzM3RTQ2NDcKUldSSFJuNXorNHB2a0J2bEYwKzJVRGw1SlBycnMxSUozd0wwZXgyZ1E0dHYzc1BrMFdMVjUwM0UK",
 			"endpoints": [
 				"https://github.com/wrangl-dev/wrangl/releases/latest/download/latest.json"
 			],

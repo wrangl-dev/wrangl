@@ -256,6 +256,9 @@ tower = { version = "0.5", features = ["util"] }
 # Swap/rollback file tests in `server_update` use a temp dir so they never
 # touch the real binary path.
 tempfile = "3"
+# Keccak-256, to check the chain tools' hard-coded ABI selectors against
+# their signatures (already in the lockfile through other dependencies).
+sha3 = "0.11"
 
 # --- OS keychain backends for `keyring` (see note on the keyring dep above) ---
 # Windows Credential Manager

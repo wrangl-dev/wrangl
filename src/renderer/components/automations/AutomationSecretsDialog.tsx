@@ -18,11 +18,14 @@ import {
   setAutomationSecret
 } from '@/lib/automation-api'
 import { READ_ONLY_SERVER_REASON } from '@/lib/write-gate'
+import { CHAIN_SECRETS, type KnownSecret } from './chain-secrets'
 
 interface AutomationSecretsDialogProps {
   projectId: string
   /** Secret names the automation's graph references. */
   referenced: string[]
+  /** Secrets listed even before they are set, e.g. the chain tools' RPC URL. */
+  known?: readonly KnownSecret[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -35,6 +38,7 @@ interface AutomationSecretsDialogProps {
 export function AutomationSecretsDialog({
   projectId,
   referenced,
+  known = [],
   open,
   onOpenChange
 }: AutomationSecretsDialogProps): React.JSX.Element {
@@ -52,7 +56,12 @@ export function AutomationSecretsDialog({
     if (open) void reload()
   }, [open, reload])
 
-  const names = [...new Set([...referenced, ...(stored ?? [])])].sort()
+  const names = [
+    ...new Set([...referenced, ...known.map((secret) => secret.name), ...(stored ?? [])])
+  ].sort()
+  // A stored secret no step references may still be read by a built-in tool.
+  const purposeOf = (name: string): string | undefined =>
+    [...known, ...CHAIN_SECRETS].find((secret) => secret.name === name)?.purpose
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,7 +70,8 @@ export function AutomationSecretsDialog({
           <DialogTitle>Secrets</DialogTitle>
           <DialogDescription>
             Kept on the machine that runs this project, in its keychain or, without one, an
-            owner-only file. Only HTTP steps can use them, and a saved value is never shown again.
+            owner-only file. HTTP steps and the built-in Robinhood Chain tools can use them, and a
+            saved value is never shown again.
           </DialogDescription>
         </DialogHeader>
         {gated && <p className="text-xs text-muted-foreground">{READ_ONLY_SERVER_REASON}</p>}
@@ -77,6 +87,7 @@ export function AutomationSecretsDialog({
                 name={name}
                 isSet={stored?.has(name) ?? false}
                 isReferenced={referenced.includes(name)}
+                purpose={purposeOf(name)}
                 gated={gated}
                 onChanged={reload}
                 onError={setError}
@@ -94,6 +105,7 @@ function SecretRow({
   name,
   isSet,
   isReferenced,
+  purpose,
   gated,
   onChanged,
   onError
@@ -102,6 +114,7 @@ function SecretRow({
   name: string
   isSet: boolean
   isReferenced: boolean
+  purpose?: string
   gated: boolean
   onChanged: () => Promise<void>
   onError: (error: string | null) => void
@@ -140,7 +153,9 @@ function SecretRow({
         <span className={isSet ? 'text-xs text-success' : 'text-xs text-warning'}>
           {isSet ? 'Saved' : 'Missing'}
         </span>
-        {!isReferenced && <span className="text-xs text-muted-foreground">Unused</span>}
+        {!isReferenced && (
+          <span className="text-xs text-muted-foreground">{purpose ?? 'Unused'}</span>
+        )}
         {!editing && (
           <WriteGate gated={gated}>
             <Button

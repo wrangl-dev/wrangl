@@ -48,6 +48,7 @@ import { AutomationRunDetail } from './AutomationRunDetail'
 import { AutomationSecretsDialog } from './AutomationSecretsDialog'
 import { AutomationSuggestionCard } from './AutomationSuggestionCard'
 import { formatDateTime } from './automation-format'
+import { CHAIN_SECRETS } from './chain-secrets'
 import { RunPolicyCard } from './RunPolicyCard'
 
 const ok = <T,>(data: T) => ({ success: true as const, data })
@@ -487,6 +488,36 @@ describe('AutomationSecretsDialog', () => {
     expect(screen.queryByDisplayValue('sk-live-123')).toBeNull()
     expect(document.body.innerHTML).not.toContain('sk-live-123')
     expect(screen.getByRole('button', { name: 'Replace' })).toBeInTheDocument()
+  })
+
+  it('lists the chain tools secrets at project level before they are set', async () => {
+    api.listAutomationSecrets.mockResolvedValue(ok([]))
+    render(
+      <AutomationSecretsDialog
+        projectId="project-1"
+        referenced={[]}
+        known={CHAIN_SECRETS}
+        open
+        onOpenChange={() => {}}
+      />
+    )
+
+    await waitFor(() => expect(screen.getAllByText('Missing')).toHaveLength(2))
+    expect(screen.getByText('ROBINHOOD_RPC_URL')).toBeInTheDocument()
+    expect(screen.getByText('Robinhood Chain RPC')).toBeInTheDocument()
+    expect(screen.getByText('COINGECKO_API_KEY')).toBeInTheDocument()
+    expect(screen.queryByText('Unused')).toBeNull()
+  })
+
+  it('names what a stored chain secret is for instead of calling it unused', async () => {
+    api.listAutomationSecrets.mockResolvedValue(ok(['ROBINHOOD_RPC_URL', 'OLD_KEY']))
+    render(
+      <AutomationSecretsDialog projectId="project-1" referenced={[]} open onOpenChange={() => {}} />
+    )
+
+    await waitFor(() => expect(screen.getAllByText('Saved')).toHaveLength(2))
+    expect(screen.getByText('Robinhood Chain RPC')).toBeInTheDocument()
+    expect(screen.getAllByText('Unused')).toHaveLength(1)
   })
 })
 

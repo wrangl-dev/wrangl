@@ -650,7 +650,7 @@ fn without_a_host_the_browser_tool_is_advertised_fail_closed() {
     }
 }
 
-const HOST_TOOLS: [&str; 14] = [
+const HOST_TOOLS: [&str; 20] = [
     "ask_user",
     "automation_apply_ops",
     "automation_capabilities",
@@ -660,6 +660,12 @@ const HOST_TOOLS: [&str; 14] = [
     "automation_list",
     "automation_propose",
     "browser",
+    "chain_balance",
+    "chain_call",
+    "chain_new_pools",
+    "chain_status",
+    "chain_token",
+    "chain_tx",
     "get_canvas_style",
     "plan",
     "read_canvas_guide",

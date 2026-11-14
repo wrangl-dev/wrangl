@@ -27,6 +27,7 @@ pub mod canvas_budget;
 pub mod canvas_policy;
 pub mod canvas_skill;
 pub mod canvas_tools;
+pub mod chain_tools;
 pub mod child;
 pub mod parent;
 pub mod presence;
@@ -34,6 +35,8 @@ pub mod read_chat;
 
 #[cfg(test)]
 mod automation_tools_tests;
+#[cfg(test)]
+mod chain_tools_tests;
 #[cfg(test)]
 mod gateway_harness;
 #[cfg(test)]
@@ -195,6 +198,9 @@ pub enum FrameKind {
     Automation,
     /// A `read_chat` tool call: any chat on this host, rendered as text.
     ReadChat,
+    /// A read-only `chain_*` tool call (Robinhood Chain), answered with the
+    /// session project's own RPC when it set one.
+    Chain,
 }
 
 /// One option the agent offers in an `ask_user` question.
@@ -399,6 +405,12 @@ pub struct FrameRequest {
     /// The chat and page a `ReadChat` frame asks for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_chat: Option<read_chat::ReadChatInput>,
+    /// The tool a `Chain` frame serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_tool: Option<chain_tools::ChainTool>,
+    /// A `Chain` frame's tool arguments, parsed by the parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_input: Option<serde_json::Value>,
 }
 
 /// Parent reply frame (one per connection). `result` carries the browser

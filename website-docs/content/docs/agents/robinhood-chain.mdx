@@ -1,0 +1,51 @@
+---
+title: Robinhood Chain tools
+description: Let any agent read Robinhood Chain (tokens, wallets, transactions, new pools) through your own RPC, without giving it a wallet key.
+---
+
+Every agent you start in Wrangl gets a set of read-only Robinhood Chain tools. Ask in plain words and the agent picks the right one:
+
+```text
+Check token 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168: who owns it, can it mint, what is it trading at?
+```
+
+```text
+List the newest pools on Robinhood Chain and flag the ones whose token can still be minted.
+```
+
+The tools only read. None of them signs or sends a transaction, and none asks for a private key or seed phrase. If an agent ever asks you for one, refuse.
+
+## What the agent can read
+
+| Tool | What it returns |
+| --- | --- |
+| `chain_status` | Chain id, latest block, gas price, and which RPC answered. |
+| `chain_token` | Name, symbol, decimals, supply, owner and whether ownership is renounced, proxy implementation, privileged functions in the bytecode (mint, pause, upgrade, ownership transfer), plus price, FDV and top pools. |
+| `chain_balance` | ETH and token balances of a wallet address. Watch-only: an address is all it needs. |
+| `chain_tx` | A transaction and its receipt: status, from, to, value, gas used, method. |
+| `chain_new_pools` | The newest DEX pools with liquidity, 24h volume and buys/sells. |
+| `chain_call` | A raw read-only contract call, for anything the other tools do not cover. |
+
+The privileged-function flags come from the contract's bytecode. They are hints, not an audit.
+
+## Use your own RPC
+
+Out of the box the tools use the public Robinhood Chain RPC. It is free but rate-limited, so heavy use gets refused. To use your own endpoint (Chainstack, Alchemy, QuickNode or any other provider):
+
+1. Open the project and click **Automations** in the rail.
+2. Click **Project secrets**.
+3. Next to `ROBINHOOD_RPC_URL`, click **Set** and paste your RPC URL.
+
+From then on, every agent in that project reads through your endpoint. The URL stays in your system keychain. Agents never see it; they are only told that "the project secret" answered.
+
+Market data (price, pools) comes from GeckoTerminal without a key. If you have a CoinGecko API key, set it as `COINGECKO_API_KEY` the same way and the tools use CoinGecko instead.
+
+## Watch the chain on a schedule
+
+The chain tools work well with [automations](/docs/automations). For example:
+
+```text
+Every 15 minutes, check the newest Robinhood Chain pools and list the ones with more than $50k liquidity whose token cannot mint.
+```
+
+The agent builds the automation and you approve it in the **Automations** tab, like any other. Each run's result shows what it found.

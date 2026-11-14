@@ -20,8 +20,8 @@ use crate::automation::model::{AutomationId, Op, Trigger};
 use crate::automation::service::{AutomationDetail, AutomationService, ServiceError};
 
 /// The calling session as the tools see it.
-struct Caller {
-    project_id: String,
+pub(super) struct Caller {
+    pub(super) project_id: String,
     /// The config id of the session's agent, when it was launched from a
     /// saved config: the id an agent node names.
     agent_id: Option<String>,
@@ -149,7 +149,7 @@ impl HostPlanServer {
         }
     }
 
-    fn automation_service(&self) -> Option<Arc<AutomationService>> {
+    pub(super) fn automation_service(&self) -> Option<Arc<AutomationService>> {
         self.automation
             .get()
             .cloned()
@@ -163,7 +163,7 @@ impl HostPlanServer {
         let _ = self.automation.set(service);
     }
 
-    fn caller(&self, session_id: &str) -> Option<Caller> {
+    pub(super) fn caller(&self, session_id: &str) -> Option<Caller> {
         let metadata = self.persistence.as_ref()?.metadata(session_id).ok()?;
         let project_id = metadata
             .project_id

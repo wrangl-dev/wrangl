@@ -33,6 +33,7 @@ use crate::web::EventSink;
 mod ask;
 mod automation;
 mod canvas;
+mod chain;
 mod read_chat;
 pub use ask::IdleSignal;
 use ask::PendingAsk;
@@ -653,6 +654,10 @@ impl HostPlanServer {
                     .await
             }
             FrameKind::ReadChat => self.read_chat(&real_session_id, req.read_chat).await,
+            FrameKind::Chain => {
+                self.chain_call(&real_session_id, req.chain_tool, req.chain_input)
+                    .await
+            }
             FrameKind::AskUser => {
                 let Some(input) = req.ask else {
                     return FrameReply::err("ask_user frame needs a question");

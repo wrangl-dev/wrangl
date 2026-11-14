@@ -1,14 +1,16 @@
 import type { AutomationId, RunId } from '@shared/types/automation.types'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Workflow } from '@/components/icons'
+import { ArrowLeft, KeyRound, Workflow } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { useMobileWebShell } from '@/hooks/use-mobile-web-shell'
 import { useServerAdmitsRemoteWrites } from '@/hooks/use-server-admits-remote-writes'
 import { AutomationDetail } from './AutomationDetail'
 import { AutomationList, AutomationListEmpty } from './AutomationList'
 import { AutomationRunDetail } from './AutomationRunDetail'
+import { AutomationSecretsDialog } from './AutomationSecretsDialog'
 import { useAutomationFocus } from './automation-focus'
 import { AutomationEditor } from './canvas/AutomationEditor'
+import { CHAIN_SECRETS } from './chain-secrets'
 import { SuggestedAutomations } from './SuggestedAutomations'
 import { useAutomationDetail, useAutomationList, useAutomationRuns } from './use-automations'
 
@@ -140,14 +142,16 @@ export function AutomationsPanel({
   if (phone) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-background">
-        {selectedId && (
-          <div className="flex shrink-0 items-center border-b border-border px-1">
+        <div className="flex shrink-0 items-center border-b border-border px-1">
+          {selectedId ? (
             <Button variant="ghost" size="touch" onClick={() => select(null)}>
               <ArrowLeft size={16} />
               Automations
             </Button>
-          </div>
-        )}
+          ) : (
+            <ProjectSecretsButton projectId={projectId} touch />
+          )}
+        </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {selectedId ? <div className="p-4">{detailView}</div> : listView}
         </div>
@@ -162,6 +166,7 @@ export function AutomationsPanel({
           <SuggestedAutomations projectId={projectId} />
         </div>
         <AutomationListEmpty />
+        <ProjectSecretsButton projectId={projectId} />
       </div>
     )
   }
@@ -172,6 +177,9 @@ export function AutomationsPanel({
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
           <Workflow size={14} className="text-muted-foreground" />
           <h2 className="text-sm font-medium text-foreground">Automations</h2>
+          <div className="ml-auto">
+            <ProjectSecretsButton projectId={projectId} />
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">{listView}</div>
       </aside>
@@ -179,6 +187,35 @@ export function AutomationsPanel({
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">{detailView}</div>
       </main>
     </div>
+  )
+}
+
+/**
+ * The project's secrets, outside any one automation: the built-in Robinhood
+ * Chain tools read ROBINHOOD_RPC_URL from here before any automation exists.
+ */
+function ProjectSecretsButton({
+  projectId,
+  touch = false
+}: {
+  projectId: string
+  touch?: boolean
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button variant="ghost" size={touch ? 'touch' : 'xs'} onClick={() => setOpen(true)}>
+        <KeyRound size={touch ? 16 : 12} />
+        Project secrets
+      </Button>
+      <AutomationSecretsDialog
+        projectId={projectId}
+        referenced={[]}
+        known={CHAIN_SECRETS}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </>
   )
 }
 

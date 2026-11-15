@@ -1,5 +1,5 @@
 {
-  "name": "wrangl",
+  "name": "@wrangl-dev/wrangl",
   "version": "0.1.0",
   "description": "Installs the Wrangl desktop app (agent manager and terminal) from GitHub Releases.",
   "license": "MIT",

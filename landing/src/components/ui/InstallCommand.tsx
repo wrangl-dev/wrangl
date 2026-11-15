@@ -11,7 +11,7 @@ import { cn } from '../../lib/utils';
 const methods = [
   { id: 'unix', label: 'macOS / Linux', command: `curl -fsSL ${INSTALL_SH_URL} | bash` },
   { id: 'windows', label: 'Windows', command: `irm ${INSTALL_PS1_URL} | iex` },
-  { id: 'npm', label: 'npm', command: 'npx wrangl' },
+  { id: 'npm', label: 'npm', command: 'npx @wrangl-dev/wrangl' },
 ] as const;
 
 type MethodId = (typeof methods)[number]['id'];

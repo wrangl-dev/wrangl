@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npx wrangl` / `npm i -g wrangl`: runs the same installer as the website's
+// `npx @wrangl-dev/wrangl` / `npm i -g @wrangl-dev/wrangl`: runs the same installer as the website's
 // curl (macOS, Linux) or PowerShell (Windows) one-liner. The app itself comes
 // from GitHub Releases and is checked against SHA256SUMS.txt by that script.
 

@@ -146,6 +146,7 @@ import {
   Upload01Icon,
   UserIcon,
   Video01Icon,
+  Wallet02Icon,
   WholeWordIcon,
   Wifi01Icon,
   WifiOff01Icon,
@@ -349,6 +350,7 @@ export const Wrench = hugeIcon('Wrench', Wrench01Icon)
 export const XCircle = hugeIcon('XCircle', CancelCircleIcon)
 export const Zap = hugeIcon('Zap', ZapIcon)
 export const Workflow = hugeIcon('Workflow', WorkflowSquare03Icon)
+export const Wallet = hugeIcon('Wallet', Wallet02Icon)
 
 // The stop button fills this square, so this glyph stays in the app.
 export const Square = forwardRef<SVGSVGElement, WranglIconProps>(function Square(

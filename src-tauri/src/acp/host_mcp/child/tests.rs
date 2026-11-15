@@ -650,7 +650,7 @@ fn without_a_host_the_browser_tool_is_advertised_fail_closed() {
     }
 }
 
-const HOST_TOOLS: [&str; 20] = [
+const HOST_TOOLS: [&str; 22] = [
     "ask_user",
     "automation_apply_ops",
     "automation_capabilities",
@@ -671,6 +671,8 @@ const HOST_TOOLS: [&str; 20] = [
     "read_canvas_guide",
     "read_chat",
     "set_session_title",
+    "wallet_address",
+    "wallet_send_transaction",
 ];
 
 pub(super) type ClientWriter = tokio::io::WriteHalf<tokio::io::DuplexStream>;

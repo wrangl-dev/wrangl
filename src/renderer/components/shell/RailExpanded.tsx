@@ -4,6 +4,7 @@ import { RailFooter } from '@/components/shell/RailFooter'
 import { RailHeader } from '@/components/shell/RailHeader'
 import { RailRow } from '@/components/shell/RailRow'
 import { useShortcutLabel } from '@/components/shell/use-shortcut-label'
+import { WalletRailEntry } from '@/components/wallet/WalletRailEntry'
 import { useProjectActions } from '@/stores/project-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import type { Project } from '@/types/project'
@@ -80,6 +81,7 @@ export function RailExpanded({
           disabled={!activeProjectId}
           onClick={() => useWorkspaceStore.getState().addAutomationsTab(activeProjectId)}
         />
+        <WalletRailEntry variant="row" />
       </div>
 
       <ProjectSidebar

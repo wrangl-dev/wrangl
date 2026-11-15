@@ -10,6 +10,7 @@ import { useTopRowPlatform } from '@/components/shell/top-row-context'
 import { useTrafficLightInset } from '@/components/shell/traffic-light-inset'
 import { useShortcutLabel } from '@/components/shell/use-shortcut-label'
 import { useTabTrackHold } from '@/components/shell/use-tab-track-hold'
+import { WalletRailEntry } from '@/components/wallet/WalletRailEntry'
 import { showsFileColumn } from '@/layouts/workspace-layout/explorer-column-blocks'
 import { cn } from '@/lib/utils'
 import { useFileExplorerVisible } from '@/stores/file-explorer-store'
@@ -221,6 +222,8 @@ export function RailCollapsed({
           >
             <Workflow size={16} />
           </RailButton>
+
+          <WalletRailEntry variant="icon" />
 
           {/* Desktop only: renders nothing on web. */}
           <SSHPopover

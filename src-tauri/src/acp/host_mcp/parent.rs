@@ -35,6 +35,7 @@ mod automation;
 mod canvas;
 mod chain;
 mod read_chat;
+mod wallet;
 pub use ask::IdleSignal;
 use ask::PendingAsk;
 
@@ -657,6 +658,16 @@ impl HostPlanServer {
             FrameKind::Chain => {
                 self.chain_call(&real_session_id, req.chain_tool, req.chain_input)
                     .await
+            }
+            FrameKind::Wallet => {
+                self.wallet_call(
+                    &auth.agent_id,
+                    &real_session_id,
+                    req.wallet_tool,
+                    req.wallet_input,
+                    hung_up,
+                )
+                .await
             }
             FrameKind::AskUser => {
                 let Some(input) = req.ask else {

@@ -12,7 +12,7 @@
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 body { margin: 0; background: var(--ink); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
 
@@ -136,11 +136,11 @@ body { margin: 0; background: var(--ink); color: var(--text); font: 16px/1.6 var
 
   :where(.site) .hero h1 .soft { display: inline-block; font-size: .78em; margin-top: .25em; }
 
-  :where(.site) .stage { position: relative; height: 340px; perspective: 1600px; }
+  :where(.site) .stage { position: relative; height: 290px; perspective: 1600px; }
 
   @media (min-width: 640px) { :where(.site) .stage { height: 520px; } }
 
-  :where(.site) .stack { position: absolute; left: 50%; top: 50%; width: min(420px, 64vw); aspect-ratio: 4 / 3; transform-style: preserve-3d;
+  :where(.site) .stack { position: absolute; left: 50%; top: 50%; width: 420px; aspect-ratio: 4 / 3; transform-style: preserve-3d;
     transform: translate(-50%, -50%); }
 
   :where(.site) .layer { position: absolute; transform-style: preserve-3d; will-change: transform; }

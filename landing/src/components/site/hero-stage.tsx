@@ -39,8 +39,13 @@ export function HeroStage() {
         c.style.top = `${r.top + r.height / 2 - s.top}px`;
       });
     };
+    // The layout is drawn at desktop size and scaled as one unit, so narrow screens get the
+    // same arrangement smaller instead of cards that crowd and overlap.
+    const STACK_EXTENT = 600;
     const apply = () => {
-      stack.style.transform = `translate(-50%, -50%) rotateX(${cur.rx}deg) rotateY(${cur.ry}deg)`;
+      // 32px = the page gutters on narrow screens.
+      const scale = Math.min(1, (window.innerWidth - 32) / STACK_EXTENT);
+      stack.style.transform = `translate(-50%, -50%) scale(${scale}) rotateX(${cur.rx}deg) rotateY(${cur.ry}deg)`;
       layers.forEach((l, i) => {
         l.style.transform = `translateZ(${Number(l.style.getPropertyValue('--z')) * cur.e}px)`;
         if (i) l.style.opacity = String(Math.min(1, cur.e * 1.6));

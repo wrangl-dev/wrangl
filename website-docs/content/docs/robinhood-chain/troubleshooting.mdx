@@ -1,0 +1,59 @@
+---
+title: Troubleshooting
+description: Fixes for rate limits, blocked networks, a missing wallet, failed simulations, expired links, and the wrong network.
+---
+
+## The public RPC is rate-limited or blocked
+
+The public Robinhood Chain RPC is free but rate-limited. When it refuses a call, the agent reports that the RPC answered HTTP 429 and is rate limited. On some networks, the public RPC is blocked, and the agent reports that the RPC is unreachable.
+
+Set your own RPC endpoint. See [Use your own RPC](/docs/robinhood-chain/network#use-your-own-rpc).
+
+## Wrangl still uses the public RPC
+
+Ask an agent to run `chain_status`. If it says the RPC is `public`:
+
+- Check that `ROBINHOOD_RPC_URL` is set in this project. Secrets belong to one project. Open **Automations** > **Project secrets** and look for **Saved**.
+- Check that the URL starts with `http`. Wrangl ignores any other value.
+
+If `chain_status` warns that the RPC is not Robinhood Chain mainnet, your URL points to another chain, such as the testnet. Use a mainnet endpoint (chain ID 4663).
+
+If the agent reports that the RPC did not answer the batch, your provider does not accept JSON-RPC batch requests. Use another endpoint.
+
+## "No wallet is connected"
+
+The agent tried to propose a transaction, but no wallet is connected. Click **Wallet** in the rail, then **Connect wallet**. See [Connect a wallet](/docs/robinhood-chain/wallet#connect-a-wallet).
+
+In the browser version, the agent reports that the wallet is not available instead. The wallet works in the desktop app only.
+
+## "No wallet found in this browser"
+
+The signing page opens in your default browser, and your wallet extension is not there. Install MetaMask, Rabby, or another wallet in that browser, or make the browser that has your wallet your default browser. Then click **Wallet** in the rail and **Connect wallet** again for a fresh link.
+
+## "Simulation failed"
+
+Wrangl simulates each proposal from your connected address. If the transaction would fail, Wrangl refuses it before you see it, and the agent gets **Simulation failed, so nothing was shown to the user**, with the reason. Nothing reaches your wallet.
+
+Check the amount, your ETH balance, and what the transaction calls. Then ask the agent to try again with the fix.
+
+## "Wrangl could not simulate this transaction"
+
+Wrangl could not get an answer from the RPC, for example because the public RPC is rate-limited. It still shows you the proposal, with this warning, and **Gas** shows **not simulated**. Read your wallet's confirmation carefully, or reject it and try again later. Your own RPC makes this less likely.
+
+## "This link expired"
+
+You reloaded the signing page or opened an old link. Click **Wallet** in the rail, then **Open signing page** or **Review in browser**, for a fresh link. See [Expired links](/docs/robinhood-chain/wallet#expired-links).
+
+If the page says **Wrangl is not answering**, Wrangl quit or restarted. Open Wrangl, then open the page again from **Wallet**.
+
+## The signing page did not open
+
+Click **Wallet** in the rail. Under **Waiting for your signature**, click **Review in browser**. If Wrangl cannot open your browser, it shows **Could not open the signing page** with the reason.
+
+## Your wallet is not on Robinhood Chain
+
+The signing page asks your wallet to switch to Robinhood Chain (chain ID 4663) when you connect and again before each signature. If the network is missing, the page asks the wallet to add it. If your wallet refuses or the page shows an error, add the network by hand with the values in [Network settings](/docs/robinhood-chain/network#network-settings), switch to it, and try again.
+
+## "Your wallet is on another account"
+
+The account selected in your wallet is not the one you connected. **Review in wallet** stays off until they match. Switch to the connected account in your wallet, or click **Use current wallet account** to connect the selected account instead.

@@ -29,7 +29,7 @@ chmod +x wrangl-server
 
 The builds need glibc 2.35 or newer, which Ubuntu 22.04 and later have. Distributions that use musl instead of glibc, such as Alpine, aren't supported.
 
-The link above gets the latest stable release. For the nightly build, download from `https://github.com/wrangl-dev/wrangl/releases/download/nightly/$asset` instead.
+The link above gets the latest stable release.
 
 Move the file to a folder on your `PATH`, such as `~/.local/bin`, so you can run `wrangl-server` from anywhere.
 
@@ -76,8 +76,6 @@ docker compose pull
 docker compose up -d
 ```
 
-To follow the nightly builds, set `WRANGL_IMAGE=ghcr.io/wrangl-dev/wrangl-server:nightly` in `.env`.
-
 </Tab>
 </Tabs>
 
@@ -114,7 +112,7 @@ Open the link in a browser. The setup page asks for:
 - **Bind host.** Keep `127.0.0.1` to allow only this machine, for example behind a reverse proxy. Pick `0.0.0.0` to accept connections from other devices.
 - **Bind port.** The default is `8080`.
 - **Allow changes from other devices.** Shown when the host is `0.0.0.0`. Turn it on to let other devices make changes. See [Allow changes from other devices](/docs/remote/server-options#allow-changes-from-other-devices).
-- **Update channel.** `stable`, `insider`, `nightly`, or `none`. See [Update the server](/docs/remote/server-options#update-the-server).
+- **Update channel.** `stable`, `insider`, `nightly`, or `none`. Only `stable` has releases today. See [Update the server](/docs/remote/server-options#update-the-server).
 
 The **Advanced** section holds the **sessions directory** (where Wrangl keeps chat history), the **projects registry file** (your project list), and how often the server checks for updates. The defaults are in `~/.local/state/wrangl`.
 

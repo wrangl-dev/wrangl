@@ -1,0 +1,36 @@
+---
+title: Robinhood Chain
+description: Read Robinhood Chain with any agent, and sign the transactions it proposes in your own wallet.
+---
+
+Wrangl is built for trading on Robinhood Chain (chain id 4663). Every agent chat gets built-in tools for it:
+
+- **Read the chain.** An agent can check a token, a wallet's balances, a transaction, or the newest pools. These tools only read.
+- **Propose a transaction.** Connect your browser wallet, and an agent can propose a transaction. Wrangl checks it first, then you sign or reject it in your wallet. Wrangl keeps only your address, never a key.
+
+Ask in plain words, for example:
+
+```text
+Check token 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168: who owns it, can it mint, what is it trading at?
+```
+
+<Callout type="warn">
+  No Wrangl tool asks for a private key or seed phrase. If an agent or a web page asks you for one, refuse.
+</Callout>
+
+## Quick start
+
+1. **Install Wrangl.** See [Install Wrangl](/docs/getting-started/install).
+2. **Sign in to an agent.** Open a project and start a chat with an agent, such as Claude Code or Codex. See [Agent setup](/docs/agent-setup) and [Start a chat](/docs/agents/start-a-chat).
+3. **Set your own RPC (optional).** The tools use the public Robinhood Chain RPC, which is rate-limited. To use your own endpoint, see [Use your own RPC](/docs/robinhood-chain/network#use-your-own-rpc).
+4. **Connect your wallet.** Click **Wallet** in the rail, then **Connect wallet**. See [Wallet](/docs/robinhood-chain/wallet). You only need this to send transactions. Reading the chain works without it.
+
+## In this section
+
+<Cards>
+  <Card title="Network and RPC" href="/docs/robinhood-chain/network" description="Add Robinhood Chain to your wallet, and set your own RPC in Wrangl." />
+  <Card title="Chain tools" href="/docs/robinhood-chain/tools" description="What each tool reads, with example prompts." />
+  <Card title="Wallet" href="/docs/robinhood-chain/wallet" description="Connect a wallet, sign or reject proposals, and disconnect." />
+  <Card title="Security" href="/docs/robinhood-chain/security" description="What Wrangl stores, and how to read the warnings before you sign." />
+  <Card title="Troubleshooting" href="/docs/robinhood-chain/troubleshooting" description="Rate limits, failed simulations, expired links, and the wrong network." />
+</Cards>

@@ -35,6 +35,12 @@ const checksByFile: Record<string, (string | RegExp)[]> = {
     'Robinhood Chain RPC',
     'rel="canonical" href="https://wrangl.dev/install/"',
   ],
+  'dist/changelog/index.html': [
+    '<title>Changelog — Wrangl</title>',
+    'What changed, day by day.',
+    'Loading changes from GitHub',
+    'rel="canonical" href="https://wrangl.dev/changelog/"',
+  ],
   'dist/privacy/index.html': [
     '<title>Privacy — Wrangl</title>',
     '>Privacy</h1>',

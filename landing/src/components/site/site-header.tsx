@@ -8,6 +8,7 @@ export function SiteHeader() {
   const isHome = pathname === '/';
   const onFeatures = pathname === '/features';
   const onInstall = pathname === '/install';
+  const onChangelog = pathname === '/changelog';
 
   return (
     <header>
@@ -19,6 +20,7 @@ export function SiteHeader() {
         <nav className="nav-links" aria-label="Main">
           <a href="/features/" aria-current={onFeatures ? 'page' : undefined}>Features</a>
           <a href="/install/" aria-current={onInstall ? 'page' : undefined}>Install</a>
+          <a href="/changelog/" aria-current={onChangelog ? 'page' : undefined}>Changelog</a>
           <a href={DOCS_URL}>Docs</a>
           <a href={GITHUB_REPO_URL}>GitHub</a>
         </nav>

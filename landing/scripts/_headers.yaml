@@ -7,18 +7,21 @@
           "'self'",
           "{{CSP_SCRIPT_HASHES}}",
         ]
-      style-src: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"]
+      style-src: ["'self'", "'unsafe-inline'"]
       img-src:
         [
           "'self'",
           "data:",
         ]
       media-src: ["'self'"]
-      font-src: ["'self'", "https://fonts.gstatic.com"]
+      font-src: ["'self'"]
       frame-src: ["'self'"]
+      # Live chain ticker (JSON-RPC) and newest pools (GeckoTerminal).
       connect-src:
         [
           "'self'",
+          "https://rpc.mainnet.chain.robinhood.com",
+          "https://api.geckoterminal.com",
         ]
       base-uri: ["'none'"]
       form-action: ["'self'"]

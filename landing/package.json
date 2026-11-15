@@ -14,20 +14,14 @@
     "test:e2e": "playwright test",
     "test:e2e:landing": "playwright test tests/e2e/landing-page.spec.ts",
     "deploy": "wrangler pages deploy dist",
-    "verify:prerender": "bun -e \"import fs from 'node:fs'; const checksByFile = { 'dist/index.html': ['Everything in one workspace', 'Claude Agent', 'Every session, one view.', 'agents over ACP', '/hero/agents-hub.mp4', 'Project-Based Workspaces', 'Embedded Browser'], 'dist/privacy/index.html': ['<title>Privacy — Wrangl</title>', '>Privacy</h1>', /Last updated:(?:<!-- -->| )*[A-Z][a-z]+ \\d{1,2}, \\d{4}/, 'no analytics', 'https://wrangl.dev/privacy/'], 'dist/terms/index.html': ['<title>Terms — Wrangl</title>', '>Terms</h1>', /Last updated:(?:<!-- -->| )*[A-Z][a-z]+ \\d{1,2}, \\d{4}/, 'MIT License', 'https://wrangl.dev/terms/'], 'dist/404.html': ['Page not found'] }; const missing = []; for (const [file, checks] of Object.entries(checksByFile)) { const html = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''; for (const s of checks) if (s instanceof RegExp ? !s.test(html) : !html.includes(s)) missing.push(file + ': ' + s); } if (fs.existsSync('dist/404/index.html')) missing.push('dist/404/index.html must not exist (would serve /404 as 200)'); if (fs.existsSync('dist/_redirects')) missing.push('dist/_redirects must not exist (SPA catch-all would turn 404s into soft 404s)'); if (missing.length) { console.error('Prerender check failed:', missing.join(', ')); process.exit(1); } console.log('Prerender check passed.');\""
+    "verify:prerender": "bun scripts/verify-prerender.ts"
   },
   "dependencies": {
-    "@hugeicons/core-free-icons": "^4.1.4",
-    "@hugeicons/react": "^1.1.6",
     "@unhead/react": "^3.1.1",
-    "clsx": "^2.1.1",
-    "lucide-react": "^1.17.0",
-    "motion": "^12.40.0",
-    "overlayscrollbars-react": "^0.5.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router": "^7.16.0",
-    "tailwind-merge": "^3.6.0",
+    "three": "0.160.0",
     "vite-plugin-react-ssg": "^0.2.0"
   },
   "devDependencies": {
@@ -39,6 +33,7 @@
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "0.160.0",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.5.0",
     "eslint": "^10.3.0",

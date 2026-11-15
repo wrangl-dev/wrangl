@@ -4,23 +4,30 @@ Wrangl is a desktop workspace for coding. Each project gets its own terminals, e
 
 Runs on Windows, macOS and Linux. Built with Tauri 2, React and Rust.
 
-![Wrangl home screen](img/01-home.jpg)
+Wrangl is built for trading on Robinhood Chain: agents read the chain, and you sign the transactions they propose in your own wallet. See the [Robinhood Chain docs](https://wrangl-docs.pages.dev/docs/robinhood-chain).
+
+![Wrangl with the git panel open next to an agent chat](img/wrangl-home.jpg)
 
 ## Install
 
-Download the installer for your platform from the latest release:
-
-https://github.com/wrangl-dev/wrangl/releases/latest
-
-- macOS: `Wrangl_<version>_aarch64.dmg` (Apple Silicon) or `Wrangl_<version>_x64.dmg` (Intel)
-- Windows: the `.exe` or `.msi`
-- Linux: `Wrangl_<version>_amd64.AppImage`
-
-On macOS and Linux you can also use the install script, which checks the download against the release checksums:
+See the [install guide](https://wrangl-docs.pages.dev/docs/getting-started/install) for every option. The quickest ones:
 
 ```bash
+# macOS and Linux
 curl -fsSL https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.sh | bash
 ```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.ps1 | iex
+```
+
+```bash
+# Any platform, with Node.js 18+
+npx @wrangl-dev/wrangl
+```
+
+Each one installs the latest release and checks it against the release checksums. Installers are also on the [releases page](https://github.com/wrangl-dev/wrangl/releases/latest).
 
 To run the server in Docker, see [`docs/deployment-guide.md`](docs/deployment-guide.md).
 
@@ -63,5 +70,3 @@ More docs: [`docs/`](docs/index.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 ## License
 
 MIT, see [LICENSE](LICENSE).
-
-Third-party notices: `src-tauri/resources/licenses/`.

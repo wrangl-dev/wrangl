@@ -26,11 +26,13 @@ export function PrivacyPage() {
       <LegalSection title="Website: third-party requests">
         <LegalList>
           <li>
-            <strong>Google Fonts</strong> (fonts.googleapis.com and
-            fonts.gstatic.com) are loaded for the Inter and JetBrains Mono
-            fonts. Your browser sends a request, including your IP address, to
-            Google.
+            The home and features pages show live Robinhood Chain data. Your browser asks
+            the public Robinhood Chain RPC (rpc.mainnet.chain.robinhood.com)
+            for the latest block and gas price, and GeckoTerminal
+            (api.geckoterminal.com) for the newest pools. Those services see
+            your IP address. No other data is sent.
           </li>
+          <li>The site uses your system fonts and loads no web fonts.</li>
           <li>
             The site sets the <code>Referrer-Policy: no-referrer</code>{' '}
             header.

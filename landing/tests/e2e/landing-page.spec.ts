@@ -1,46 +1,48 @@
 import { expect, test } from '@playwright/test';
 
-async function scrollThroughLanding(page: import('@playwright/test').Page) {
-  const scrollHost = page
-    .locator('[data-overlayscrollbars-viewport], .overflow-y-auto')
-    .first();
-
-  await scrollHost.waitFor({ state: 'visible', timeout: 15_000 });
-
-  const scrollHeight = await scrollHost.evaluate((el) => el.scrollHeight);
-  const viewportHeight = await scrollHost.evaluate((el) => el.clientHeight);
-  const steps = Math.max(1, Math.ceil(scrollHeight / viewportHeight));
-
-  for (let step = 0; step <= steps; step += 1) {
-    const top = Math.min(step * viewportHeight, scrollHeight);
-    await scrollHost.evaluate((el, scrollTop) => {
-      el.scrollTop = scrollTop as number;
-    }, top);
-  }
-
-  await page.waitForLoadState('networkidle');
-
-  await scrollHost.evaluate((el) => {
-    el.scrollTop = 0;
-  });
-  await expect
-    .poll(() => scrollHost.evaluate((el) => el.scrollTop))
-    .toBeLessThan(5);
-}
-
-test.describe('Landing page', () => {
-  test('matches full landing page snapshot', async ({ page }) => {
+test.describe('Landing site', () => {
+  test('home shows the hero, install block and both feature groups', async ({ page }) => {
     await page.goto('/');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Wrangle every agent.');
+    await expect(page.getByRole('link', { name: 'Install Wrangl' }).first()).toHaveAttribute('href', '/install/');
+    await expect(page.getByRole('heading', { name: 'One line. Or the installer.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Crypto' })).toBeVisible();
+    // TOKEN_CA is empty until launch, so the CA slot stays hidden.
+    await expect(page.locator('#ca')).toBeHidden();
+  });
 
-    await page.locator('main#main-content').waitFor({ state: 'visible' });
+  test('home install tabs switch the command', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('tab', { name: 'npm' }).click();
+    await expect(page.locator('#cmd')).toHaveText('npx @wrangl-dev/wrangl');
+  });
 
-    await scrollThroughLanding(page);
+  test('features page switches tabs by click, arrow key and hash', async ({ page }) => {
+    await page.goto('/features/');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Everything Wrangl does.');
+    await expect(page.locator('#panel-wrangl')).toBeVisible();
+    await page.getByRole('tab', { name: /^Crypto/ }).click();
+    await expect(page.locator('#panel-crypto')).toBeVisible();
+    await expect(page).toHaveURL(/#crypto$/);
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('#panel-wrangl')).toBeVisible();
+    await page.goto('/features/#crypto');
+    await expect(page.locator('#panel-crypto')).toBeVisible();
+  });
 
-    const pageContent = page.locator('.min-h-screen');
+  test('install page picks an OS tab and lists the five steps', async ({ page }) => {
+    await page.goto('/install/');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Install Wrangl.');
+    await page.getByRole('tab', { name: 'Windows' }).click();
+    await expect(page.locator('#os-cmd')).toContainText('install.ps1');
+    await expect(page.locator('section.step')).toHaveCount(5);
+  });
 
-    await expect(pageContent).toHaveScreenshot('landing-page-full.png', {
-      animations: 'disabled',
-      maxDiffPixelRatio: 0.05,
-    });
+  test('privacy and terms render inside the site shell', async ({ page }) => {
+    for (const [path, title] of [['/privacy/', 'Privacy'], ['/terms/', 'Terms']]) {
+      await page.goto(path);
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+      await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+    }
   });
 });

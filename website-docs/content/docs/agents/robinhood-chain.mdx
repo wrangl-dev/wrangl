@@ -3,7 +3,7 @@ title: Robinhood Chain tools
 description: Let any agent read Robinhood Chain (tokens, wallets, transactions, new pools) through your own RPC, without giving it a wallet key.
 ---
 
-Every agent you start in Wrangl gets a set of read-only Robinhood Chain tools. Ask in plain words and the agent picks the right one:
+Every agent you start in Wrangl gets a set of read-only Robinhood Chain tools, plus wallet tools that only propose transactions you sign yourself. Ask in plain words and the agent picks the right one:
 
 ```text
 Check token 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168: who owns it, can it mint, what is it trading at?
@@ -13,7 +13,7 @@ Check token 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168: who owns it, can it mint
 List the newest pools on Robinhood Chain and flag the ones whose token can still be minted.
 ```
 
-The tools only read. None of them signs or sends a transaction, and none asks for a private key or seed phrase. If an agent ever asks you for one, refuse.
+The chain tools only read. No tool signs or sends a transaction on its own, and none asks for a private key or seed phrase. If an agent ever asks you for one, refuse.
 
 ## What the agent can read
 
@@ -27,6 +27,23 @@ The tools only read. None of them signs or sends a transaction, and none asks fo
 | `chain_call` | A raw read-only contract call, for anything the other tools do not cover. |
 
 The privileged-function flags come from the contract's bytecode. They are hints, not an audit.
+
+## Trade from your own wallet
+
+Connect a wallet and an agent can propose a transaction, which you sign yourself. Wrangl keeps only your address, never a key.
+
+1. Click **Wallet** in the rail, then **Connect wallet**.
+2. Your browser opens a local Wrangl page (`127.0.0.1`, only reachable from your computer). Connect MetaMask, Rabby or another browser wallet there. It adds Robinhood Chain (chain id 4663) if your wallet does not have it yet.
+3. Ask an agent for a transaction, for example "send 0.001 ETH to 0x…".
+
+The agent calls `wallet_send_transaction`. Wrangl simulates it first and refuses one that would fail. It also warns you about risky calldata, such as an unlimited token approval. The transaction then waits on the signing page. Click **Review in wallet**, read the confirmation your wallet shows, and confirm or reject it there. The agent gets the transaction hash, or "rejected".
+
+| Tool | What it does |
+| --- | --- |
+| `wallet_address` | The connected address, or that none is connected. |
+| `wallet_send_transaction` | Proposes a transaction and waits for you to sign or reject it. Nothing is sent without your click in your wallet. |
+
+Use a separate wallet with a small balance for trading through agents.
 
 ## Use your own RPC
 

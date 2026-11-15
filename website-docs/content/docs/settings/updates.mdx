@@ -18,21 +18,15 @@ The tab shows the version you have as **Wrangl** and the number, with the channe
 
 ## Pick a release channel
 
-Under **Channel**, open **Release channel** and select one of these:
+Under **Channel**, open **Release channel**. The list has **Stable**, **Insider**, and **Nightly**.
 
-- **Stable** gets production releases. It is the default and the most reliable channel.
-- **Insider** gets release candidates, the versions that come before a stable release. They can be unfinished.
-- **Nightly** gets builds made automatically from the newest code. They can be unstable.
+Stable is the only channel that ships today. It is the default. Insider and Nightly builds are not published yet, so keep **Stable**.
 
-On **Stable** and **Nightly**, Wrangl downloads and installs signed updates in the app. On Nightly the tab says **Updates are signed and install in the app.**
+On **Stable**, Wrangl downloads and installs signed updates in the app.
 
-On **Insider**, Wrangl does not install updates for you. It tells you about a new version and opens the release page, where you download and install it yourself.
-
-If Wrangl cannot get a signed update on any channel, for example because there is no network or no build for your system yet, it falls back to the release page. The tab then says **Automatic update is not available. Download and install it from the release page.**
+If Wrangl cannot get a signed update, for example because there is no network or no build for your system yet, it falls back to the release page. The tab then says **Automatic update is not available. Download and install it from the release page.**
 
 When you switch channels, Wrangl clears an update it found on the old channel. Select **Check for updates** to look on the new one.
-
-If you installed Wrangl from the AUR on Arch Linux, there is no channel choice. Update with `yay -S wrangl`.
 
 ## Check for updates
 
@@ -50,7 +44,7 @@ An automatic check does not undo a download. If Wrangl already downloaded a vers
 
 ## Install an update
 
-When Wrangl finds a new version, a message appears in the corner of the window: **Update available**, with the version number below it. On Insider and Nightly, the message starts with the channel name.
+When Wrangl finds a new version, a message appears in the corner of the window: **Update available**, with the version number below it.
 
 1. Select **Download**. If the message offers **Open download page** instead, Wrangl opens the release page and you install the new version yourself.
 2. Wait for the download. A message shows its progress and goes away when the download ends.

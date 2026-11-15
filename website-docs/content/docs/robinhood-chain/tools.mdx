@@ -1,0 +1,54 @@
+---
+title: Chain tools
+description: The Robinhood Chain tools every agent chat gets, what each one returns, and example prompts.
+---
+
+Every agent chat in Wrangl gets read-only Robinhood Chain tools, plus wallet tools that only propose transactions you sign yourself. You do not call the tools by name. Ask in plain words and the agent picks the right one.
+
+```text
+Check token 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168: who owns it, can it mint, what is it trading at?
+```
+
+```text
+List the newest pools on Robinhood Chain and flag the ones whose token can still be minted.
+```
+
+```text
+What is in wallet 0x… right now? Include ETH and these tokens: 0x…, 0x…
+```
+
+```text
+Did transaction 0x… go through? What did it call?
+```
+
+The chain tools only read. No tool signs or sends a transaction on its own, and none asks for a private key or seed phrase.
+
+## What the agent can read
+
+| Tool | What it returns |
+| --- | --- |
+| `chain_status` | Chain ID, latest block, gas price, and which RPC answered. Agents call it first when another chain tool fails. |
+| `chain_token` | Name, symbol, decimals, supply, owner and whether ownership is renounced, proxy implementation, privileged functions in the bytecode (mint, pause, upgrade, ownership transfer), plus price, FDV, and top pools. |
+| `chain_balance` | ETH and token balances of a wallet address, for up to 20 tokens. Watch-only: an address is all it needs. |
+| `chain_tx` | A transaction and its receipt: status, block, from, to, value, gas used, and method. |
+| `chain_new_pools` | The newest DEX pools with liquidity, 24h volume, and buys and sells. Up to 10 pages. |
+| `chain_call` | A raw read-only contract call, for anything the other tools do not cover. It can also test a call before you sign it. |
+
+The privileged-function flags come from the contract's bytecode. They are hints, not an audit. New pools are often scams, so check the token with `chain_token` first.
+
+The tools read through the public RPC, or through your own RPC if you set one. See [Network and RPC](/docs/robinhood-chain/network). Market data comes from GeckoTerminal, or from CoinGecko if you set a key.
+
+## What the agent can send
+
+| Tool | What it does |
+| --- | --- |
+| `wallet_address` | The address of the wallet you connected, or that none is connected. |
+| `wallet_send_transaction` | Proposes a transaction and waits for you to sign or reject it. Nothing is sent without your click in your wallet. |
+
+When you sign, the agent gets the transaction hash and can check it with `chain_tx`. When you reject, the agent is told not to try again unless you ask. See [Wallet](/docs/robinhood-chain/wallet).
+
+## Where the tools work
+
+The tools are in agent chats. Automation steps run without Wrangl's built-in tools, so an [automation](/docs/automations) run cannot use the chain tools or propose a transaction.
+
+The wallet tools need the desktop app. In the browser version, `wallet_address` and `wallet_send_transaction` report that the wallet is not available.

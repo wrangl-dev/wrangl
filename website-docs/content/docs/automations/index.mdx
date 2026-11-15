@@ -215,6 +215,8 @@ Some steps need a secret, such as an API token for a web request. You enter secr
 
 A saved secret shows **Saved**. Click **Replace** to change it, or **Delete** to remove it. A secret the automation no longer uses is marked **Unused**.
 
-Secrets belong to the project, so every automation in the project can use them. Only web request (HTTP) steps can use a secret, and Wrangl never shows a saved value again.
+Secrets belong to the project, so every automation in the project can use them. In an automation, only web request (HTTP) steps can use a secret, and Wrangl never shows a saved value again.
+
+To set a project secret without opening an automation, click **Project secrets** in the **Automations** tab. The built-in Robinhood Chain tools in agent chats read two of them, `ROBINHOOD_RPC_URL` and `COINGECKO_API_KEY`. See [Robinhood Chain network and RPC](/docs/robinhood-chain/network#use-your-own-rpc).
 
 Secrets are kept on the machine that runs the project, in the system keychain. On a machine without a keychain, such as `wrangl-server` on a Linux server without a desktop, Wrangl keeps them in a file named `automation-secrets.json` in its data folder that only your user account can read.

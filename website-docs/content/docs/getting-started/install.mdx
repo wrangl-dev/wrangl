@@ -9,14 +9,7 @@ If you want to run Wrangl on a server and open it in a browser or on your phone,
 
 ## macOS
 
-You can install Wrangl with Homebrew, with the install script, or from a disk image. All three give you the same app.
-
-### Homebrew
-
-```bash
-brew tap wrangl-dev/wrangl
-brew install --cask wrangl
-```
+You can install Wrangl with the install script, with [npm](#npm), or from a disk image. All three give you the same app.
 
 ### Install script
 
@@ -41,13 +34,29 @@ To skip the question, run the script with `WRANGL_INSTALL_YES=1`. To install som
 2. Download the `.dmg` for your Mac. The file ending in `_aarch64.dmg` is for Apple silicon. The file ending in `_x64.dmg` is for Intel.
 3. Open the `.dmg` and drag **Wrangl** into **Applications**.
 
+Wrangl builds are not signed yet, so macOS Gatekeeper can stop an app installed from a downloaded `.dmg` from opening. See [macOS does not open Wrangl after a DMG download](/docs/troubleshooting#macos-does-not-open-wrangl-after-a-dmg-download). The install script does not have this problem.
+
 ## Windows
 
+### Install script
+
+Run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.ps1 | iex
+```
+
+The script finds the latest release, downloads `Wrangl_<version>_x64-setup.exe`, and checks it against the release checksums. If the check fails, it installs nothing. Then it runs the installer. When the installer is done, start Wrangl from the Start menu.
+
+Builds are for 64-bit Windows on x86. On ARM64 Windows, the script installs the x64 build, which runs under emulation.
+
+### Installer
+
 1. Open the [latest release](https://github.com/wrangl-dev/wrangl/releases/latest).
-2. Download the file ending in `_x64-setup.exe` or the file ending in `_x64_en-US.msi`. Both install the same app. Builds are for 64-bit x86 Windows.
+2. Download the file ending in `_x64-setup.exe` or the file ending in `_x64_en-US.msi`. Both install the same app.
 3. Run the installer.
 
-The install script does not work on Windows.
+Wrangl builds are not signed yet. When you run an installer that you downloaded in a browser, Windows SmartScreen can show **Windows protected your PC**. Click **More info**, then **Run anyway**. The install script does not get this warning.
 
 ## Linux
 
@@ -82,17 +91,19 @@ Install the package with your system's package manager. For example, on Ubuntu:
 sudo apt install ./Wrangl_<version>_amd64.deb
 ```
 
-### Arch Linux (AUR)
+## npm
 
-Wrangl is in the AUR as `wrangl`. Install it with your AUR helper. For example:
+If you have [Node.js](https://nodejs.org) 18 or later, you can install Wrangl with npm on macOS, Linux, and Windows:
 
 ```bash
-yay -S wrangl
+npx @wrangl-dev/wrangl
 ```
+
+This runs the same install script as above: the `curl` script on macOS and Linux, the PowerShell script on Windows. Run it again to update Wrangl.
 
 ## Updates
 
-The desktop app checks for new versions and can install them for you. You can pick the **Stable**, **Insider**, or **Nightly** channel. See [Settings](/docs/settings) for details.
+The desktop app checks for new versions and can install them for you. Stable is the only release channel that ships today. Insider and Nightly builds are not published yet. See [Updates](/docs/settings/updates).
 
 ## Next step
 

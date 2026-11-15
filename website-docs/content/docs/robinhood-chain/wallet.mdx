@@ -1,0 +1,72 @@
+---
+title: Wallet
+description: Connect your browser wallet, sign or reject the transactions an agent proposes, and disconnect.
+---
+
+<Callout type="info">This works in the desktop app only.</Callout>
+
+Connect a browser wallet, such as MetaMask or Rabby, and an agent can propose transactions on Robinhood Chain. You sign or reject each one in your own wallet. The wallet is watch-only: Wrangl keeps only your address, never a key. The same wallet is connected for all your projects.
+
+Browser wallets live in your web browser, not in Wrangl. So you connect and sign on a local Wrangl page that opens in your default browser. The page runs on your computer at `127.0.0.1` and other devices cannot reach it. Your wallet extension must be installed in your default browser.
+
+## Connect a wallet
+
+1. Click **Wallet** in the rail.
+2. Click **Connect wallet**. Your default browser opens the **Wrangl wallet** page.
+3. On the page, click **Connect wallet**. Your wallet asks you to share an account. Approve it.
+4. The page asks your wallet to switch to Robinhood Chain (chain ID 4663). If your wallet does not have the network yet, the page offers to add it. Approve that too.
+
+The page and the **Wallet** dialog in Wrangl now show **Connected** and your address. To add the network by hand, see [Network settings](/docs/robinhood-chain/network#network-settings).
+
+To connect a different account, switch to it in your wallet, then click **Use current wallet account** on the page.
+
+## Sign a transaction
+
+1. Ask an agent for a transaction, for example "send 0.001 ETH to 0x…".
+2. The agent proposes it. Wrangl checks it and simulates it from your address. A transaction that would fail is refused before you see it, and the agent is told why.
+3. Wrangl opens the signing page in your browser. The **Wallet** entry in the rail shows how many proposals are waiting for your signature.
+4. Read the proposal on the page: the agent's description, any warnings, **From**, **To**, **Send** (the ETH amount), **Gas**, and the contract data if there is any.
+5. Click **Review in wallet**. Your wallet shows the real transaction. Check it there, then confirm or reject it in the wallet.
+
+When you confirm, the page says **Sent** and the agent gets the transaction hash.
+
+If your wallet is on a different account than the one you connected, the page says so and **Review in wallet** is turned off. Switch to the connected account in your wallet first.
+
+For what the warnings mean, see [Read the warnings](/docs/robinhood-chain/security#read-the-warnings).
+
+## Reject a transaction
+
+You can reject a proposal in three places:
+
+- Click **Reject** on the signing page.
+- Reject it in your wallet after **Review in wallet**.
+- Click **Reject** in the **Wallet** dialog in Wrangl.
+
+The agent gets "rejected" and is told not to try again unless you ask.
+
+A proposal also ends when the agent stops waiting for it, for example when its turn ends. Wrangl then removes it from the page, and it counts as rejected.
+
+## The Wallet dialog
+
+Click **Wallet** in the rail to open it. It shows:
+
+- Your connected address, or **No wallet connected** with a **Connect wallet** button.
+- **Open signing page**, which opens the signing page in your browser again.
+- **Disconnect**.
+- **Waiting for your signature**: each proposal with its description, amount, recipient, and warnings. Click **Review in browser** to open it on the signing page, or **Reject** to reject it. When nothing waits, the list says **Nothing to sign.**
+
+## Disconnect
+
+Click **Wallet** in the rail, then **Disconnect**. You can also click **Disconnect** on the signing page. Wrangl forgets the address and rejects every proposal that is still waiting.
+
+To also remove Wrangl's access in your wallet, use your wallet's own settings for connected sites.
+
+## Expired links
+
+Each link to the signing page holds a key that works only until Wrangl quits. Once the page loads, it removes the key from the address bar. So if you reload the page, or open the page's address without the key, you see **This link expired. Open Wallet in Wrangl again.** If Wrangl quit while the page was open, the page says **Wrangl is not answering. Open Wallet in Wrangl again for a fresh link.** A link from before Wrangl restarted no longer works, because the page gets a new address and key each time Wrangl starts.
+
+To get a fresh link, click **Wallet** in the rail, then **Connect wallet**, **Open signing page**, or **Review in browser**.
+
+## Automations
+
+Automation steps run without Wrangl's built-in tools. An [automation](/docs/automations) run cannot propose a transaction, so nothing from an automation waits for your signature. Proposals come only from agent chats.

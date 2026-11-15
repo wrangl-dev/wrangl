@@ -1,0 +1,54 @@
+---
+title: Network and RPC
+description: Robinhood Chain network settings for your wallet, and how to make Wrangl read through your own RPC.
+---
+
+## Network settings
+
+When you connect a wallet in Wrangl, the signing page asks your wallet to switch to Robinhood Chain, and to add it if it is missing. If your wallet does not do that, or you want to add the network yourself in MetaMask, Rabby, or another wallet, use these values:
+
+| Setting | Value |
+| --- | --- |
+| Network name | Robinhood Chain |
+| RPC URL | `https://rpc.mainnet.chain.robinhood.com` |
+| Chain ID | `4663` (hex `0x1237`) |
+| Currency symbol | `ETH` |
+| Block explorer | `https://robinhoodchain.blockscout.com` |
+
+The testnet has chain ID `46630` and the RPC URL `https://rpc.testnet.chain.robinhood.com`. Wrangl's tools and wallet work on mainnet (chain ID 4663) only.
+
+## Use your own RPC
+
+Out of the box, the chain tools read through the public RPC. It is free but rate-limited, so heavy use gets refused. You can use your own endpoint from any RPC provider instead.
+
+1. Open the project and click **Automations** in the rail.
+2. Click **Project secrets**.
+3. Next to `ROBINHOOD_RPC_URL`, click **Set**.
+4. Paste your RPC URL. It must start with `http`. Click **Save**.
+
+From then on, every agent chat in that project reads through your endpoint. The secret belongs to the project, so set it again in each project where you want it.
+
+The URL is kept on the machine that runs the project, in the system keychain. On a machine without a keychain, Wrangl keeps it in a file that only your user account can read. Agents never see the URL. Wrangl only tells them that the project secret answered.
+
+To change or remove the URL, open **Project secrets** again and click **Replace** or **Delete**.
+
+### Check that it works
+
+Ask an agent:
+
+```text
+Run chain_status and tell me which RPC answered.
+```
+
+`chain_status` reports the chain ID, the latest block, the gas price, and which RPC answered:
+
+- `project secret ROBINHOOD_RPC_URL` means Wrangl used your endpoint.
+- `public` means Wrangl used the public RPC. Check that the secret is set in this project and that the URL starts with `http`. If Wrangl cannot read the secret, it also falls back to the public RPC.
+
+If your endpoint is on another chain, for example the testnet, `chain_status` adds a warning: **this RPC is not Robinhood Chain mainnet (expected chain id 4663)**.
+
+Wrangl sends several calls in one JSON-RPC batch request. Your provider must accept batch requests.
+
+## Market data
+
+Prices, FDV, and pools come from GeckoTerminal, which needs no key. If you have a CoinGecko API key, set it as `COINGECKO_API_KEY` under **Project secrets**, the same way. The tools then use CoinGecko's on-chain API instead.

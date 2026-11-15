@@ -9,12 +9,7 @@ This page lists problems that Wrangl users run into, and how to fix them. If you
 
 If you download the `.dmg` file in a web browser and install from it, macOS Gatekeeper can stop the app from opening. Gatekeeper is the macOS check for apps from the internet.
 
-Install Wrangl with Homebrew or the install script instead. Both install the same app without this problem:
-
-```bash
-brew tap wrangl-dev/wrangl
-brew install --cask wrangl
-```
+Wrangl builds are not signed yet. Install Wrangl with the install script instead. It installs the same app without this problem:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.sh | bash
@@ -24,6 +19,16 @@ If you already installed from the DMG, you can remove the download mark from the
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Wrangl.app"
+```
+
+## Windows SmartScreen warns about the installer
+
+If you download the Wrangl installer in a web browser and run it, Windows SmartScreen can show **Windows protected your PC**, because the installer is not signed yet. Click **More info**, then **Run anyway**.
+
+The install script does not get this warning. Run it in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/wrangl-dev/wrangl/main/scripts/install.ps1 | iex
 ```
 
 ## Linux: the wrangl command is not found
@@ -112,3 +117,7 @@ If a shortcut still goes to your browser or to your operating system, give it ot
 ## Notifications do not appear in the browser version
 
 Browsers show notifications only for pages on `https://` or `localhost`. See [Notifications](/docs/settings/notifications#allow-notifications-in-the-browser-version).
+
+## Robinhood Chain tools or the wallet do not work
+
+See [Robinhood Chain troubleshooting](/docs/robinhood-chain/troubleshooting).

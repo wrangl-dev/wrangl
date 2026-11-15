@@ -1,0 +1,48 @@
+---
+title: Security
+description: What Wrangl stores for Robinhood Chain, how to read the warnings before you sign, and how to keep your funds safe.
+---
+
+## Never share your seed phrase
+
+Wrangl never needs your private key or seed phrase. No Wrangl tool asks for one, and the agents are told never to ask. If an agent, a web page, or anyone else asks for your seed phrase or private key, refuse. Do not paste it into a chat, a terminal, a file, or a project secret.
+
+You sign transactions in your own wallet. Wrangl only sees the result: the transaction hash, or that you rejected it.
+
+## What Wrangl stores
+
+| What | Where |
+| --- | --- |
+| Your connected wallet address | `wallet.json` in Wrangl's app data folder. An address is public data. |
+| Proposals waiting for your signature | In memory only. They are gone when Wrangl quits. |
+| `ROBINHOOD_RPC_URL` and `COINGECKO_API_KEY` | Project secrets, in the system keychain. On a machine without a keychain, in a file that only your user account can read. Agents never see them. |
+
+Wrangl does not store a private key or seed phrase, because it never gets one.
+
+The signing page runs on your own computer at `127.0.0.1`, on a new port each time Wrangl starts. Its link holds a secret key, and the page answers only on your computer, so other web pages and other devices cannot use it.
+
+## Read the warnings
+
+Before it shows you a proposal, Wrangl checks the contract data and adds a warning for these calls:
+
+- **Unlimited token approval.** The approved address could move all of that token from your wallet, now and later. Approve only the amount the trade needs. Wrangl shows this for an `approve` or `increaseAllowance` with a huge amount.
+- **Token approval.** The approved address can spend up to the amount shown, in the token's base units.
+- **Approval for ALL your NFTs in this collection.** A `setApprovalForAll` call that turns approval on. Scams use this to empty wallets.
+- **Token transfer.** The amount in base units and the address it goes to. Check the address.
+- **Wrangl could not simulate this transaction.** Wrangl got no usable answer from the RPC, so it did not test the transaction. The page shows **Gas** as **not simulated**. Read your wallet's confirmation carefully.
+
+Base units are the token's smallest unit. For a token with 18 decimals, 1 token is 1 followed by 18 zeros.
+
+A passed simulation means the transaction would not fail at that moment. It does not mean the transaction is safe or a good trade. Your wallet's confirmation shows what is really sent. Always read it before you confirm.
+
+## Use a separate wallet
+
+Use a separate wallet with a small balance for trading through agents. Keep your main funds in a wallet you never connect to Wrangl. If something goes wrong, you lose only what is in the trading wallet.
+
+Check your token approvals from time to time and remove the ones you no longer need.
+
+## Hints, not audits
+
+The privileged-function flags from `chain_token`, such as mint or upgrade, come from the contract's bytecode. They are hints, not an audit. A token without flags can still be a scam, and new pools often are.
+
+Agents can be wrong. Nothing in Wrangl, and nothing an agent says, is financial advice. Check what you buy, and decide yourself.

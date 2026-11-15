@@ -419,7 +419,7 @@ describe('ShellRail', () => {
       useShellLayoutStore.setState({ railExpanded: false })
     })
 
-    it('shows only the icons: project stack, Search, Canvas, Automations, SSH, Theme, Shortcuts, Settings, Report a bug', () => {
+    it('shows only the icons: project stack, Search, Canvas, Automations, Wallet, SSH, Theme, Shortcuts, Settings, Report a bug', () => {
       renderRail()
 
       const nav = screen.getByRole('navigation', { name: 'Projects' })
@@ -436,6 +436,8 @@ describe('ShellRail', () => {
         'Search',
         'Open canvas',
         'Open automations',
+        // Desktop only: the wallet lives on the desktop host.
+        'Wallet',
         'SSH hosts',
         // Pinned at the bottom; Settings then Report a bug, the same
         // relative pair order as the expanded footer.

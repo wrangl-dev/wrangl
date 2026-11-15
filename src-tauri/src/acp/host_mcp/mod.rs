@@ -32,6 +32,7 @@ pub mod child;
 pub mod parent;
 pub mod presence;
 pub mod read_chat;
+pub mod wallet_tools;
 
 #[cfg(test)]
 mod automation_tools_tests;
@@ -201,6 +202,9 @@ pub enum FrameKind {
     /// A read-only `chain_*` tool call (Robinhood Chain), answered with the
     /// session project's own RPC when it set one.
     Chain,
+    /// A `wallet_*` tool call: the connected address, or a transaction the
+    /// user signs in their own wallet on the local signing page.
+    Wallet,
 }
 
 /// One option the agent offers in an `ask_user` question.
@@ -411,6 +415,12 @@ pub struct FrameRequest {
     /// A `Chain` frame's tool arguments, parsed by the parent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_input: Option<serde_json::Value>,
+    /// The tool a `Wallet` frame serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_tool: Option<wallet_tools::WalletTool>,
+    /// A `Wallet` frame's tool arguments, parsed by the parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_input: Option<serde_json::Value>,
 }
 
 /// Parent reply frame (one per connection). `result` carries the browser

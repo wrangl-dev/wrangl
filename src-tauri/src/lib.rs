@@ -68,6 +68,7 @@ mod window_visibility;
 // compiled for tests so it runs on every CI platform.
 #[cfg(any(target_os = "windows", test))]
 mod webview_recovery;
+pub mod wallet;
 mod worktree;
 
 #[cfg(target_os = "windows")]
@@ -1337,6 +1338,8 @@ pub fn run() {
                     return Ok(());
                 }
             }
+            // The user's wallet, connected watch-only: just its address.
+            wallet::install(wallet::WalletService::open(Some(app_data_dir.clone())));
             // The ONE desktop web store (AD-14/AD-18), opened inside the
             // locked `app_data_dir`. Shared-live receives this instance on
             // every start and never opens its own, so stop/start cycles reuse
@@ -2255,6 +2258,10 @@ pub fn run() {
             acp::commands::acp_factory_key_status,
             acp::commands::acp_factory_key_save,
             acp::commands::codex_cli_auth_status,
+            wallet::commands::wallet_status,
+            wallet::commands::wallet_open_signer,
+            wallet::commands::wallet_disconnect,
+            wallet::commands::wallet_reject,
             acp::commands::acp_probe_runtime,
             acp::commands::acp_set_turn_timeout,
             acp::commands::acp_set_turn_idle_timeout,

@@ -197,6 +197,11 @@ impl HostPlanServer {
         for ask in cancelled {
             let _ = ask.responder.send(AskOutcome::Cancelled);
         }
+        // A transaction proposal is a question to the user too: the turn that
+        // made it is over, so take it off the signing page.
+        if let Some(wallet) = crate::wallet::installed() {
+            wallet.cancel_session(real_session_id);
+        }
     }
 
     /// Register how to reset the idle deadline of `agent_id`'s sessions.

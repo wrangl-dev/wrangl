@@ -39,9 +39,9 @@ fn client() -> &'static reqwest::Client {
 
 /// Where this call's reads go. `rpc_label` / `market_label` are what the
 /// agent is told; the URL and key stay here.
-struct Sources {
+pub(super) struct Sources {
     rpc_url: String,
-    rpc_label: &'static str,
+    pub(super) rpc_label: &'static str,
     market_root: &'static str,
     market_key: Option<String>,
     market_label: &'static str,
@@ -113,7 +113,7 @@ impl HostPlanServer {
     /// The project's own RPC and market key when it set them, else the
     /// public sources. Any vault failure falls back to public: a read-only
     /// lookup should not fail because a keychain is locked.
-    async fn chain_sources(&self, session_id: &str) -> Sources {
+    pub(super) async fn chain_sources(&self, session_id: &str) -> Sources {
         let mut sources = Sources::public();
         let (Some(service), Some(caller)) = (self.automation_service(), self.caller(session_id))
         else {
@@ -154,7 +154,7 @@ fn parse<T: serde::de::DeserializeOwned>(input: Value) -> Result<T, String> {
 
 /// One JSON-RPC batch; each item is the call's result or its error text, in
 /// request order.
-async fn rpc_batch(
+pub(super) async fn rpc_batch(
     sources: &Sources,
     calls: &[(&str, Value)],
 ) -> Result<Vec<Result<Value, String>>, String> {

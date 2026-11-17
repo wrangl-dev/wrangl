@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "postbuild": "bun scripts/write-headers.ts && bun scripts/write-404.ts",
+    "postbuild": "bun scripts/write-headers.ts && bun scripts/write-404.ts && bun scripts/write-seo-files.ts",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "bun test --path-ignore-patterns 'tests/e2e/**'",

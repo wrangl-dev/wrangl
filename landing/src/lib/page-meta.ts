@@ -1,7 +1,7 @@
 import { useHead, useSeoMeta } from '@unhead/react';
+import { SITE_URL, X_HANDLE } from './links';
 
-const SITE = 'https://wrangl.dev';
-const OG_IMAGE = `${SITE}/og-image.png`;
+const OG_IMAGE = `${SITE_URL}/og-image.png`;
 
 type PageMeta = {
   title: string;
@@ -13,7 +13,7 @@ type PageMeta = {
 
 /** Title, description, canonical and social tags for one page. */
 export function usePageMeta({ title, description, path, robots }: PageMeta) {
-  const url = path ? `${SITE}${path}` : undefined;
+  const url = path ? `${SITE_URL}${path}` : undefined;
   useSeoMeta({
     title,
     description,
@@ -28,6 +28,7 @@ export function usePageMeta({ title, description, path, robots }: PageMeta) {
     ogImageHeight: 630,
     ogImageAlt: title,
     twitterCard: 'summary_large_image',
+    twitterSite: X_HANDLE,
     twitterTitle: title,
     twitterDescription: description,
     twitterImage: OG_IMAGE,

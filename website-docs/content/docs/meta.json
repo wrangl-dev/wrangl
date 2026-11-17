@@ -15,6 +15,7 @@
     "server-api",
     "browser",
     "settings",
-    "troubleshooting"
+    "troubleshooting",
+    "changelog"
   ]
 }

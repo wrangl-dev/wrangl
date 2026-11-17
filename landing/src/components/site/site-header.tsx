@@ -1,6 +1,6 @@
 import { useLocation } from 'react-router';
 
-import { DOCS_URL, GITHUB_REPO_URL, LATEST_RELEASE_URL } from '../../lib/links';
+import { CHANGELOG_URL, DOCS_URL, GITHUB_REPO_URL, LATEST_RELEASE_URL, X_URL } from '../../lib/links';
 import { BrandMark } from './brand-mark';
 
 export function SiteHeader() {
@@ -8,7 +8,6 @@ export function SiteHeader() {
   const isHome = pathname === '/';
   const onFeatures = pathname === '/features';
   const onInstall = pathname === '/install';
-  const onChangelog = pathname === '/changelog';
 
   return (
     <header>
@@ -20,9 +19,10 @@ export function SiteHeader() {
         <nav className="nav-links" aria-label="Main">
           <a href="/features/" aria-current={onFeatures ? 'page' : undefined}>Features</a>
           <a href="/install/" aria-current={onInstall ? 'page' : undefined}>Install</a>
-          <a href="/changelog/" aria-current={onChangelog ? 'page' : undefined}>Changelog</a>
+          <a href={CHANGELOG_URL}>Changelog</a>
           <a href={DOCS_URL}>Docs</a>
           <a href={GITHUB_REPO_URL}>GitHub</a>
+          <a href={X_URL}>X</a>
         </nav>
         <div className="nav-cta">
           <a

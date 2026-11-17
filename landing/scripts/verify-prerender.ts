@@ -6,7 +6,7 @@
  */
 
 import fs from 'node:fs';
-import { SITE_URL } from '../src/lib/links';
+import { SITE_URL, X_HANDLE } from '../src/lib/links';
 
 const lastUpdated = /Last updated:(?:<!-- -->| )*[A-Z][a-z]+ \d{1,2}, \d{4}/;
 
@@ -21,7 +21,7 @@ const checksByFile: Record<string, (string | RegExp)[]> = {
     'href="/install/"',
     `rel="canonical" href="${SITE_URL}/"`,
     `property="og:image" content="${SITE_URL}/og-image.png"`,
-    'name="twitter:site" content="@wranglterm"',
+    `name="twitter:site" content="${X_HANDLE}"`,
     '"@type":"SoftwareApplication"',
   ],
   'dist/features/index.html': [

@@ -16,14 +16,12 @@
       media-src: ["'self'"]
       font-src: ["'self'"]
       frame-src: ["'self'"]
-      # Live chain ticker (JSON-RPC), newest pools (GeckoTerminal), and the
-      # changelog page (GitHub REST API).
+      # Live chain ticker (JSON-RPC) and newest pools (GeckoTerminal).
       connect-src:
         [
           "'self'",
           "https://rpc.mainnet.chain.robinhood.com",
           "https://api.geckoterminal.com",
-          "https://api.github.com",
         ]
       base-uri: ["'none'"]
       form-action: ["'self'"]

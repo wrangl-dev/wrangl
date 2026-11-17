@@ -33,8 +33,8 @@ export function PrivacyPage() {
             your IP address. No other data is sent.
           </li>
           <li>
-            The changelog page asks the GitHub API (api.github.com) for the
-            project&apos;s public releases and commits. GitHub sees your IP address. No other data is sent.
+            The changelog in the docs asks the GitHub API (api.github.com)
+            for the project&apos;s public releases and commits. GitHub sees your IP address. No other data is sent.
           </li>
           <li>The site uses your system fonts and loads no web fonts.</li>
           <li>

@@ -1,7 +1,6 @@
 import type { RouteObject } from 'react-router';
 
 import { App } from '../App';
-import { ChangelogPage } from '../pages/changelog-page';
 import { FeaturesPage } from '../pages/features-page';
 import { HomePage } from '../pages/home-page';
 import { InstallPage } from '../pages/install-page';
@@ -17,7 +16,6 @@ export const routes: RouteObject[] = [
       { index: true, Component: HomePage },
       { path: 'features', Component: FeaturesPage },
       { path: 'install', Component: InstallPage },
-      { path: 'changelog', Component: ChangelogPage },
       { path: 'privacy', Component: PrivacyPage },
       { path: 'terms', Component: TermsPage },
       { path: '*', Component: NotFoundPage },

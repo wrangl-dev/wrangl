@@ -5,6 +5,8 @@ export const docsRoute = '/docs'
 // Below the basename, so fumadocs prefixes it with the Vite base.
 export const docsContentRoute = '/llms.mdx'
 
+export const xUrl = 'https://x.com/wranglterm'
+
 export const gitConfig = {
   user: 'wrangl-dev',
   repo: 'wrangl',

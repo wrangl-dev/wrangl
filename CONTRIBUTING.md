@@ -182,10 +182,12 @@ bun run build:tauri:linux      # Linux (x64)
 Releases are automated via GitHub Actions when a version tag is pushed:
 
 1. Ensure version numbers match in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`
-2. Push a version tag: `git tag v0.3.7 && git push origin v0.3.7`
-3. CI will build, sign, and publish a draft release
-4. Verify the release assets include `.sig` files and `latest.json`
-5. Publish the draft release
+2. Regenerate `CHANGELOG.md` from the commits with the same `cliff.toml` the release notes use, naming the new tag, and commit it with the version bump:
+   `GITHUB_REPO=wrangl-dev/wrangl npx git-cliff@2 --tag-pattern '^v[0-9]' --tag v0.1.2 -o CHANGELOG.md`
+3. Push a version tag: `git tag v0.1.2 && git push origin v0.1.2`
+4. CI will build, sign, and publish a draft release
+5. Verify the release assets include `.sig` files and `latest.json`
+6. Publish the draft release
 
 ### Signing Key Management
 

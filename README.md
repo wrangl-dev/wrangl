@@ -8,7 +8,7 @@ Wrangl is built for trading on Robinhood Chain: agents read the chain, and you s
 
 ![Wrangl with the git panel open next to an agent chat](img/wrangl-home.jpg)
 
-[Website](https://wrangl-landing.pages.dev) · [Docs](https://wrangl-docs.pages.dev/docs/) · [Changelog](https://wrangl-docs.pages.dev/docs/changelog) · [X @wranglterm](https://x.com/wranglterm) · [Discussions](https://github.com/wrangl-dev/wrangl/discussions)
+[Website](https://wrangl-landing.pages.dev) · [Docs](https://wrangl-docs.pages.dev/docs/) · [Changelog](https://wrangl-docs.pages.dev/docs/changelog) · [X @usewrngl](https://x.com/usewrngl) · [Discussions](https://github.com/wrangl-dev/wrangl/discussions)
 
 ## Install
 
@@ -71,7 +71,7 @@ More docs: [`docs/`](docs/index.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Report a bug
 
-Use **Report a bug** at the bottom of the app's left sidebar, or [open an issue](https://github.com/wrangl-dev/wrangl/issues/new/choose). No GitHub account? DM [@wranglterm on X](https://x.com/wranglterm). Details are in [Report a problem](https://wrangl-docs.pages.dev/docs/troubleshooting/report-a-problem).
+Use **Report a bug** at the bottom of the app's left sidebar, or [open an issue](https://github.com/wrangl-dev/wrangl/issues/new/choose). No GitHub account? DM [@usewrngl on X](https://x.com/usewrngl). Details are in [Report a problem](https://wrangl-docs.pages.dev/docs/troubleshooting/report-a-problem).
 
 ## License
 

@@ -21,8 +21,8 @@ body = """
         {%- set pr_in_msg = msg is containing("(#" ) -%}
         - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
             {{ msg }}\
-            {% if commit.remote.pr_number and not pr_in_msg %} ([#{{ commit.remote.pr_number }}](https://github.com/{{ get_env(name="GITHUB_REPO", default="OWNER/REPO") }}/pull/{{ commit.remote.pr_number }})){% endif %}\
-    {% endfor %}
+            {% if commit.remote.pr_number and not pr_in_msg %} ([#{{ commit.remote.pr_number }}](https://github.com/{{ get_env(name="GITHUB_REPO", default="OWNER/REPO") }}/pull/{{ commit.remote.pr_number }})){% endif %}
+{% endfor %}
 {% endfor %}
 """
 footer = ""

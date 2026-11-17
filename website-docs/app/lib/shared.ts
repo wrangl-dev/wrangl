@@ -11,7 +11,7 @@ export const docsSiteUrl = 'https://wrangl-docs.pages.dev'
 // Shared with the landing site, which hosts the image.
 export const ogImageUrl = 'https://wrangl-landing.pages.dev/og-image.png'
 
-export const xHandle = '@usewrngl'
+export const xHandle = '@usewrangl'
 export const xUrl = `https://x.com/${xHandle.slice(1)}`
 
 export const gitConfig = {

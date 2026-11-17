@@ -2,9 +2,11 @@ import type React from 'react'
 import { AbsoluteFill, Composition, Still } from 'remotion'
 import { AgentsHub, HUB_FRAMES, HUB_H, HUB_W } from './agents-hub'
 import { INK, Mark, Tile, WHITE, Wordmark } from './marks'
+import { XAvatar3D, XHeader3D } from './x-3d'
 
 const center: React.CSSProperties = { alignItems: 'center', justifyContent: 'center' }
-const TAGLINE = 'A hundred agents in one manager.'
+// Same line as the site title, so X, the OG card and the landing say one thing.
+const TAGLINE = 'The agent terminal for Robinhood Chain.'
 
 // macOS app icon grid: 1024 canvas, 824 tile, transparent margin. Source for `tauri icon`.
 const AppIcon: React.FC = () => (
@@ -74,6 +76,8 @@ export const RootCompositions: React.FC = () => (
     <Still id="OgImage" component={OgImage} width={1200} height={630} />
     <Still id="XAvatar" component={XAvatar} width={400} height={400} />
     <Still id="XHeader" component={XHeader} width={1500} height={500} />
+    <Still id="XAvatar3D" component={XAvatar3D} width={400} height={400} />
+    <Still id="XHeader3D" component={XHeader3D} width={1500} height={500} />
     <Composition
       id="AgentsHub"
       component={AgentsHub}

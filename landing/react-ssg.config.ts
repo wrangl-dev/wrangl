@@ -1,10 +1,11 @@
 import { defineReactSsgConfig } from 'vite-plugin-react-ssg'
 
+import { SITE_URL } from './src/lib/links'
 import { routes } from './src/routes'
 
 export default defineReactSsgConfig({
   history: 'browser',
-  origin: 'https://wrangl.dev',
+  origin: SITE_URL,
   routes,
   // The `*` route is not discovered automatically; prerender it once so the
   // build can ship it as dist/404.html (see scripts/write-404.ts).

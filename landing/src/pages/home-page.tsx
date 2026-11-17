@@ -4,17 +4,45 @@ import { HeroStage } from '../components/site/hero-stage';
 import { HomeInstall } from '../components/site/home-install';
 import { PoolList } from '../components/site/pool-list';
 import { TokenCa } from '../components/site/token-ca';
-import { LATEST_RELEASE_URL } from '../lib/links';
+import { useHead } from '@unhead/react';
+import { GITHUB_REPO_URL, LATEST_RELEASE_URL, LICENSE_URL, SITE_URL, X_URL } from '../lib/links';
 import { usePageMeta } from '../lib/page-meta';
 import { useNewPools } from '../lib/use-new-pools';
+
+const HOME_DESCRIPTION =
+  'Claude, Codex and 40+ agents in one workspace with terminals, git, SSH and a browser. They research and prepare trades on Robinhood Chain; you approve every one in your own wallet.';
+
+// Lets search engines show Wrangl as a free app and tie the site to its X and GitHub.
+// No softwareVersion: a hand-typed version goes stale with every release.
+const SOFTWARE_JSON_LD = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Wrangl',
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Windows, macOS, Linux',
+  description: HOME_DESCRIPTION,
+  url: `${SITE_URL}/`,
+  downloadUrl: LATEST_RELEASE_URL,
+  license: LICENSE_URL,
+  isAccessibleForFree: true,
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  author: {
+    '@type': 'Organization',
+    name: 'Wrangl',
+    url: `${SITE_URL}/`,
+    sameAs: [X_URL, GITHUB_REPO_URL],
+  },
+});
 
 export function HomePage() {
   usePageMeta({
     title: 'Wrangl — the agent terminal for Robinhood Chain',
-    description:
-      'Claude, Codex and 40+ agents in one workspace with terminals, git, SSH and a browser. They research and prepare trades on Robinhood Chain; you approve every one in your own wallet.',
+    description: HOME_DESCRIPTION,
     path: '/',
     robots: 'index,follow',
+  });
+  useHead({
+    script: [{ type: 'application/ld+json', textContent: SOFTWARE_JSON_LD }],
   });
   const pools = useNewPools(true);
 

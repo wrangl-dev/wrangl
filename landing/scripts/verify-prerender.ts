@@ -6,6 +6,7 @@
  */
 
 import fs from 'node:fs';
+import { SITE_URL } from '../src/lib/links';
 
 const lastUpdated = /Last updated:(?:<!-- -->| )*[A-Z][a-z]+ \d{1,2}, \d{4}/;
 
@@ -18,7 +19,10 @@ const checksByFile: Record<string, (string | RegExp)[]> = {
     'Check a token before you buy',
     'href="/features/"',
     'href="/install/"',
-    'rel="canonical" href="https://wrangl.dev/"',
+    `rel="canonical" href="${SITE_URL}/"`,
+    `property="og:image" content="${SITE_URL}/og-image.png"`,
+    'name="twitter:site" content="@wranglterm"',
+    '"@type":"SoftwareApplication"',
   ],
   'dist/features/index.html': [
     '<title>Features — Wrangl</title>',
@@ -26,30 +30,38 @@ const checksByFile: Record<string, (string | RegExp)[]> = {
     '44 agents. One window.',
     'Eight tools. Six read, two ask you.',
     'Claude Agent',
-    'rel="canonical" href="https://wrangl.dev/features/"',
+    `rel="canonical" href="${SITE_URL}/features/"`,
   ],
   'dist/install/index.html': [
     '<title>Install — Wrangl</title>',
     'Install Wrangl.',
     'Sign in to an agent',
     'Robinhood Chain RPC',
-    'rel="canonical" href="https://wrangl.dev/install/"',
+    `rel="canonical" href="${SITE_URL}/install/"`,
   ],
   'dist/privacy/index.html': [
     '<title>Privacy — Wrangl</title>',
     '>Privacy</h1>',
     lastUpdated,
     'no analytics',
-    'https://wrangl.dev/privacy/',
+    `${SITE_URL}/privacy/`,
   ],
   'dist/terms/index.html': [
     '<title>Terms — Wrangl</title>',
     '>Terms</h1>',
     lastUpdated,
     'MIT License',
-    'https://wrangl.dev/terms/',
+    `${SITE_URL}/terms/`,
   ],
   'dist/404.html': ['Page not found'],
+  'dist/robots.txt': [`Sitemap: ${SITE_URL}/sitemap.xml`],
+  'dist/sitemap.xml': [
+    `<loc>${SITE_URL}/</loc>`,
+    `<loc>${SITE_URL}/features/</loc>`,
+    `<loc>${SITE_URL}/install/</loc>`,
+    `<loc>${SITE_URL}/privacy/</loc>`,
+    `<loc>${SITE_URL}/terms/</loc>`,
+  ],
 };
 
 const missing: string[] = [];
@@ -59,6 +71,7 @@ for (const [file, checks] of Object.entries(checksByFile)) {
   for (const s of checks) {
     if (s instanceof RegExp ? !s.test(html) : !html.includes(s)) missing.push(`${file}: ${s}`);
   }
+  if (html.includes('wrangl.dev/')) missing.push(`${file}: points at wrangl.dev, which is not live`);
   if (html.includes('cdn.jsdelivr.net')) missing.push(`${file}: must not load anything from a CDN`);
 }
 

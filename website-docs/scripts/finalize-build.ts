@@ -19,7 +19,8 @@
 
 import { existsSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { docsRoute } from '../app/lib/shared'
+import { docsRoute, docsSiteUrl } from '../app/lib/shared'
+import { docPagePaths, robotsTxt, sitemapXml } from './seo-files'
 
 const client = 'build/client'
 const site = join(client, docsRoute)
@@ -52,4 +53,11 @@ const redirects = [
 ]
 writeFileSync(join(client, '_redirects'), `${redirects.join('\n')}\n`)
 
+// Built from the pages that exist, on the origin the docs are served from.
+const pagePaths = docPagePaths(site, docsRoute)
+const sitemapUrl = `${docsSiteUrl}${docsRoute}/sitemap.xml`
+writeFileSync(join(site, 'sitemap.xml'), sitemapXml(docsSiteUrl, pagePaths))
+writeFileSync(join(client, 'robots.txt'), robotsTxt(sitemapUrl))
+
 console.log(`✓ ${site} holds the site; ${client}/_redirects written`)
+console.log(`✓ sitemap.xml (${pagePaths.length} pages) and robots.txt written for ${docsSiteUrl}`)

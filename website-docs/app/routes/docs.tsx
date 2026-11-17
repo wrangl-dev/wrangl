@@ -11,7 +11,7 @@ import {
 } from 'fumadocs-ui/layouts/docs/page'
 import { getMDXComponents } from '@/components/mdx'
 import { baseOptions } from '@/lib/layout.shared'
-import { gitConfig } from '@/lib/shared'
+import { docsSiteUrl, gitConfig, ogImageUrl, xHandle } from '@/lib/shared'
 import { getPageMarkdownUrl, source } from '@/lib/source'
 import type { Route } from './+types/docs'
 
@@ -22,6 +22,8 @@ export async function loader({ params }: Route.LoaderArgs) {
 
   return {
     path: page.path,
+    // Cloudflare Pages serves every page as a directory, so the trailing slash is the real URL.
+    canonicalUrl: `${docsSiteUrl}${page.url.replace(/\/?$/, '/')}`,
     markdownUrl: getPageMarkdownUrl(page).url,
     pageTree: await source.serializePageTree(source.getPageTree())
   }
@@ -34,16 +36,31 @@ const clientLoader = browserCollections.docs.createClientLoader({
     { toc, frontmatter, default: Mdx },
     {
       markdownUrl,
-      path
+      path,
+      canonicalUrl
     }: {
       markdownUrl: string
       path: string
+      canonicalUrl: string
     }
   ) {
+    const title = `${frontmatter.title} | Wrangl Docs`
     return (
       <DocsPage toc={toc}>
-        <title>{frontmatter.title}</title>
+        <title>{title}</title>
         <meta name="description" content={frontmatter.description} />
+        <link rel="canonical" href={canonicalUrl} />
+        <meta property="og:site_name" content="Wrangl Docs" />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content={canonicalUrl} />
+        <meta property="og:title" content={title} />
+        <meta property="og:description" content={frontmatter.description} />
+        <meta property="og:image" content={ogImageUrl} />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:site" content={xHandle} />
+        <meta name="twitter:title" content={title} />
+        <meta name="twitter:description" content={frontmatter.description} />
+        <meta name="twitter:image" content={ogImageUrl} />
         <DocsTitle>{frontmatter.title}</DocsTitle>
         <DocsDescription>{frontmatter.description}</DocsDescription>
         <div className="flex flex-row gap-2 items-center border-b -mt-4 pb-6">
@@ -62,13 +79,14 @@ const clientLoader = browserCollections.docs.createClientLoader({
 })
 
 export default function Page({ loaderData }: Route.ComponentProps) {
-  const { pageTree, path, markdownUrl } = useFumadocsLoader(loaderData)
+  const { pageTree, path, markdownUrl, canonicalUrl } = useFumadocsLoader(loaderData)
 
   return (
     <DocsLayout {...baseOptions()} tree={pageTree}>
       {clientLoader.useContent(loaderData.path, {
         markdownUrl,
-        path
+        path,
+        canonicalUrl
       })}
     </DocsLayout>
   )

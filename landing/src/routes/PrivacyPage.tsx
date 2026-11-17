@@ -5,7 +5,7 @@ import {
   LegalSection,
 } from '../components/legal/LegalPage';
 import { LEGAL_LAST_UPDATED } from '../lib/legal';
-import { GITHUB_REPO_URL, ISSUES_URL } from '../lib/links';
+import { GITHUB_REPO_URL, ISSUES_URL, SITE_URL } from '../lib/links';
 
 export function PrivacyPage() {
   return (
@@ -17,7 +17,7 @@ export function PrivacyPage() {
     >
       <LegalSection title="Summary">
         <p>
-          Wrangl is a free, open-source desktop app. This website (wrangl.dev)
+          Wrangl is a free, open-source desktop app. This website ({new URL(SITE_URL).host})
           is a static site. It has no analytics, no cookies, and no forms, and
           it stores nothing about you. Details below.
         </p>

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::agents::RegistryStore;
 use crate::app_info;
 use crate::pty::PtyManager;
 
@@ -21,6 +22,7 @@ pub const COMMANDS: &[&str] = &[
     "pty_write",
     "pty_resize",
     "pty_kill",
+    "agent_list",
 ];
 
 /// Pushes an event to the client's channel number `channel`.
@@ -30,6 +32,7 @@ pub type EventSink = Arc<dyn Fn(u32, Value) + Send + Sync>;
 #[derive(Default, Clone)]
 pub struct Backend {
     pub pty: PtyManager,
+    pub agents: RegistryStore,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -80,8 +83,14 @@ struct KillArgs {
     id: String,
 }
 
+#[derive(Deserialize, Default)]
+struct AgentListArgs {
+    #[serde(default)]
+    refresh: bool,
+}
+
 /// Run `cmd` with JSON `input`. Events for channels named in `input` go to `sink`.
-pub fn dispatch(
+pub async fn dispatch(
     backend: &Backend,
     cmd: &str,
     input: Value,
@@ -121,6 +130,15 @@ pub fn dispatch(
             backend.pty.kill(&a.id);
             effects.killed_pty = Some(a.id);
             Value::Null
+        }
+        "agent_list" => {
+            let a: AgentListArgs = if input.is_null() {
+                AgentListArgs::default()
+            } else {
+                args(cmd, input)?
+            };
+            let list = backend.agents.list(a.refresh).await?;
+            serde_json::to_value(list).map_err(|e| e.to_string())?
         }
         other => return Err(format!("unknown command {other}")),
     };

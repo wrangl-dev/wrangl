@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { type AgentSummary, listAgents, loadSelectedAgent, saveSelectedAgent } from '../lib/agents';
 import type { Project } from '../lib/projects';
+import { AgentPicker } from './AgentPicker';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
 
@@ -15,9 +17,30 @@ interface Props {
   project: Project | null;
 }
 
-/** The empty chat: what an agent should do, in which project. Agents connect in the next step. */
+/** The empty chat: what an agent should do, in which project. Sending arrives with ACP chat. */
 export function ChatHome({ project }: Props) {
   const [draft, setDraft] = useState('');
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agentId, setAgentId] = useState<string | null>(() => loadSelectedAgent());
+
+  const load = useCallback((refresh: boolean) => {
+    setLoading(true);
+    setError(null);
+    listAgents(refresh)
+      .then(setAgents)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => load(false), [load]);
+
+  const choose = (id: string) => {
+    setAgentId(id);
+    saveSelectedAgent(id);
+  };
+  const agent = agents.find((a) => a.id === agentId) ?? null;
 
   return (
     <section className="chat-home" aria-label="Chat">
@@ -33,7 +56,17 @@ export function ChatHome({ project }: Props) {
           rows={3}
         />
         <div className="composer-bar">
-          <span className="composer-hint">No agent connected yet</span>
+          <AgentPicker
+            agents={agents}
+            loading={loading}
+            error={error}
+            selectedId={agentId}
+            onSelect={choose}
+            onRetry={() => load(true)}
+          />
+          <span className="composer-hint">
+            {agent ? `Chat with ${agent.name} arrives in the next update` : ''}
+          </span>
           <button
             type="submit"
             className="send-button"

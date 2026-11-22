@@ -3,6 +3,15 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::{dispatch, parse_channel, Backend, EventSink, COMMANDS};
+use crate::agents::RegistryStore;
+
+/// A backend that never touches the network or the user's registry cache.
+fn offline() -> Backend {
+    Backend {
+        pty: crate::pty::PtyManager::default(),
+        agents: RegistryStore::new(None, "http://127.0.0.1:9/registry.json"),
+    }
+}
 
 fn quiet_sink() -> EventSink {
     Arc::new(|_, _| {})
@@ -16,23 +25,26 @@ fn parses_tauri_style_channel_ids() {
     assert!(parse_channel(&json!("__CHANNEL__:x")).is_err());
 }
 
-#[test]
-fn app_info_answers_in_the_ui_shape() {
-    let (answer, effects) =
-        dispatch(&Backend::default(), "app_info", Value::Null, &quiet_sink()).unwrap();
+#[tokio::test]
+async fn app_info_answers_in_the_ui_shape() {
+    let (answer, effects) = dispatch(&offline(), "app_info", Value::Null, &quiet_sink())
+        .await
+        .unwrap();
     assert_eq!(answer["chainId"], 4663);
     assert_eq!(answer["name"], "Wrangl");
     assert_eq!(effects, super::Effects::default());
 }
 
-#[test]
-fn unknown_commands_and_bad_arguments_are_errors() {
-    let backend = Backend::default();
+#[tokio::test]
+async fn unknown_commands_and_bad_arguments_are_errors() {
+    let backend = offline();
     let sink = quiet_sink();
     assert!(dispatch(&backend, "rm_rf", Value::Null, &sink)
+        .await
         .unwrap_err()
         .contains("unknown command"));
     assert!(dispatch(&backend, "pty_write", json!({ "id": 1 }), &sink)
+        .await
         .unwrap_err()
         .contains("bad arguments"));
     assert!(dispatch(
@@ -41,27 +53,31 @@ fn unknown_commands_and_bad_arguments_are_errors() {
         json!({ "cols": 80, "rows": 24, "onEvent": "nope" }),
         &sink
     )
+    .await
     .unwrap_err()
     .contains("expected a channel"));
 }
 
-#[test]
-fn kill_reports_its_effect_even_for_unknown_ids() {
+#[tokio::test]
+async fn kill_reports_its_effect_even_for_unknown_ids() {
     let (_, effects) = dispatch(
-        &Backend::default(),
+        &offline(),
         "pty_kill",
         json!({ "id": "gone" }),
         &quiet_sink(),
     )
+    .await
     .unwrap();
     assert_eq!(effects.killed_pty.as_deref(), Some("gone"));
 }
 
-#[test]
-fn every_listed_command_is_dispatched() {
-    let backend = Backend::default();
+#[tokio::test]
+async fn every_listed_command_is_dispatched() {
+    let backend = offline();
     for cmd in COMMANDS {
-        let err = dispatch(&backend, cmd, json!({}), &quiet_sink()).err();
+        let err = dispatch(&backend, cmd, json!({}), &quiet_sink())
+            .await
+            .err();
         assert!(
             !err.unwrap_or_default().contains("unknown command"),
             "{cmd} is listed but not dispatched"

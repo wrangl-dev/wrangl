@@ -101,12 +101,16 @@ let web: Promise<WebClient | null> | null = null;
 function webClient(): Promise<WebClient | null> {
   if (!web) {
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    web = WebClient.connect(`${scheme}://${location.host}/ws`).catch(() => null);
+    web = WebClient.connect(`${scheme}://${location.host}/ws`).catch(() => {
+      // Not up (yet): try again on the next call instead of giving up for the page's life.
+      web = null;
+      return null;
+    });
   }
   return web;
 }
 
-/** Which backend this UI talks to. Resolves once; `none` means a plain browser without wrangl-web. */
+/** Which backend this UI talks to; `none` means a plain browser without wrangl-web (right now). */
 export async function backendKind(): Promise<BackendKind> {
   if (isTauri()) return 'tauri';
   return (await webClient()) ? 'web' : 'none';

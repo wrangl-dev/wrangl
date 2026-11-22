@@ -1,7 +1,9 @@
 //! Wrangl desktop runtime.
 
+pub mod agents;
 pub mod app_info;
 pub mod bridge;
+pub mod paths;
 pub mod pty;
 pub mod web;
 
@@ -9,6 +11,15 @@ pub mod web;
 mod app_info_tests;
 
 use tauri::Manager;
+
+/// The agents the registry lists for this machine.
+#[tauri::command]
+async fn agent_list(
+    backend: tauri::State<'_, bridge::Backend>,
+    refresh: Option<bool>,
+) -> Result<Vec<agents::registry::AgentSummary>, String> {
+    backend.agents.list(refresh.unwrap_or(false)).await
+}
 
 /// Start the desktop app.
 ///
@@ -21,13 +32,14 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .manage(pty::PtyManager::default())
+        .manage(bridge::Backend::default())
         .invoke_handler(tauri::generate_handler![
             app_info::app_info,
             pty::commands::pty_spawn,
             pty::commands::pty_write,
             pty::commands::pty_resize,
             pty::commands::pty_kill,
+            agent_list,
         ])
         .setup(|_app| {
             log::info!("[app] started v{}", env!("CARGO_PKG_VERSION"));
@@ -37,7 +49,7 @@ pub fn run() {
         .expect("error while building Wrangl")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                app.state::<pty::PtyManager>().kill_all();
+                app.state::<bridge::Backend>().pty.kill_all();
             }
         });
 }

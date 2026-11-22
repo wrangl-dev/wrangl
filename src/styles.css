@@ -473,3 +473,146 @@ button:disabled {
   background: var(--raised);
   color: var(--text);
 }
+
+/* Agent picker */
+
+.composer-bar {
+  justify-content: space-between;
+}
+
+.composer-hint {
+  flex: 1;
+  text-align: right;
+}
+
+.agent-picker {
+  position: relative;
+}
+
+.agent-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-trigger:hover,
+.agent-trigger[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.agent-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.agent-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.agent-icon-letter {
+  display: inline-grid;
+  place-items: center;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.agent-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-height: 360px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+.agent-menu input {
+  margin: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.agent-menu ul {
+  margin: 0;
+  padding: 0 4px 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.agent-menu li button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+}
+
+.agent-menu li button:hover:not(:disabled),
+.agent-menu li button[aria-selected="true"] {
+  background: var(--raised);
+}
+
+.agent-menu li button:disabled {
+  opacity: 0.4;
+}
+
+.agent-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-meta {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.agent-empty,
+.agent-error {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--danger);
+}
+
+.agent-error button {
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-decoration: underline;
+}

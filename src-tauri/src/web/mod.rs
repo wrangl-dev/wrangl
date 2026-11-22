@@ -131,7 +131,7 @@ async fn session(socket: WebSocket, backend: Backend) {
     while let Some(Ok(msg)) = rx.next().await {
         let Message::Text(text) = msg else { continue };
         let reply = match serde_json::from_str::<Request>(&text) {
-            Ok(req) => match bridge::dispatch(&backend, &req.cmd, req.args, &sink) {
+            Ok(req) => match bridge::dispatch(&backend, &req.cmd, req.args, &sink).await {
                 Ok((ok, effects)) => {
                     let mut ids = owned.lock();
                     if let Some(id) = effects.spawned_pty {

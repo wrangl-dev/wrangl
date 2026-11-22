@@ -5,17 +5,19 @@ use std::path::PathBuf;
 use tauri::ipc::Channel;
 use tauri::State;
 
-use super::{PtyEvent, PtyManager};
+use super::PtyEvent;
+use crate::bridge::Backend;
 
 #[tauri::command]
 pub fn pty_spawn(
-    manager: State<'_, PtyManager>,
+    backend: State<'_, Backend>,
     cols: u16,
     rows: u16,
     cwd: Option<String>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
-    manager
+    backend
+        .pty
         .spawn_shell(cols, rows, cwd.map(PathBuf::from), move |event| {
             if let Err(e) = on_event.send(event) {
                 log::warn!("[pty] could not deliver output: {e}");
@@ -25,21 +27,21 @@ pub fn pty_spawn(
 }
 
 #[tauri::command]
-pub fn pty_write(manager: State<'_, PtyManager>, id: String, data: String) -> Result<(), String> {
-    manager.write(&id, &data)
+pub fn pty_write(backend: State<'_, Backend>, id: String, data: String) -> Result<(), String> {
+    backend.pty.write(&id, &data)
 }
 
 #[tauri::command]
 pub fn pty_resize(
-    manager: State<'_, PtyManager>,
+    backend: State<'_, Backend>,
     id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    manager.resize(&id, cols, rows)
+    backend.pty.resize(&id, cols, rows)
 }
 
 #[tauri::command]
-pub fn pty_kill(manager: State<'_, PtyManager>, id: String) {
-    manager.kill(&id);
+pub fn pty_kill(backend: State<'_, Backend>, id: String) {
+    backend.pty.kill(&id);
 }

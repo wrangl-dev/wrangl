@@ -15,6 +15,20 @@ bun install
 bun run dev
 ```
 
+### In a browser
+
+The same UI runs in a browser for development and testing, with real terminals behind it. Run these in two terminals, then open http://localhost:1420:
+
+```bash
+bun run web:server
+```
+
+```bash
+bun run web:dev
+```
+
+`wrangl-web` listens on `127.0.0.1:4220` only and accepts pages from `localhost:1420` and `localhost:4220`, so other websites cannot reach it. Terminals a browser tab opened end when the tab closes.
+
 Checks:
 
 ```bash

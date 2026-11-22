@@ -1,7 +1,9 @@
 //! Wrangl desktop runtime.
 
 pub mod app_info;
+pub mod bridge;
 pub mod pty;
+pub mod web;
 
 #[cfg(test)]
 mod app_info_tests;

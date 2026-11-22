@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { TerminalView } from './TerminalView';
 
 interface Tab {
@@ -7,19 +7,16 @@ interface Tab {
   exited: boolean;
 }
 
-let nextKey = 1;
-const newTab = (): Tab => {
-  const key = nextKey++;
-  return { key, title: `Terminal ${key}`, exited: false };
-};
+const tabFor = (key: number): Tab => ({ key, title: `Terminal ${key}`, exited: false });
 
 /** Terminal tabs. Every tab stays mounted so switching never restarts a shell. */
 export function TerminalTabs() {
-  const [tabs, setTabs] = useState<Tab[]>(() => [newTab()]);
-  const [activeKey, setActiveKey] = useState<number>(() => tabs[0].key);
+  const [tabs, setTabs] = useState<Tab[]>([tabFor(1)]);
+  const [activeKey, setActiveKey] = useState(1);
+  const nextKey = useRef(2);
 
   const add = useCallback(() => {
-    const tab = newTab();
+    const tab = tabFor(nextKey.current++);
     setTabs((t) => [...t, tab]);
     setActiveKey(tab.key);
   }, []);

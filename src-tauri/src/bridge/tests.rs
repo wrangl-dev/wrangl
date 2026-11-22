@@ -10,6 +10,7 @@ fn offline() -> Backend {
     Backend {
         pty: crate::pty::PtyManager::default(),
         agents: RegistryStore::new(None, "http://127.0.0.1:9/registry.json"),
+        chats: crate::agents::session::AgentSessions::default(),
     }
 }
 

@@ -24,11 +24,16 @@ portable-pty = "0.9"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process"] }
 tower-http = { version = "0.6", features = ["fs"] }
 env_logger = "0.11"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+agent-client-protocol = { version = "1", features = ["unstable_auth_methods"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
+tar = "0.4"
+flate2 = "1"
 
 [profile.release]
 codegen-units = 1

@@ -1,7 +1,13 @@
-//! AI agents: the registry of what can be started. Running them (ACP) comes next.
+//! AI agents: the registry of what can be started, installing them, and chatting over ACP.
 
+pub mod install;
 pub mod registry;
+pub mod session;
 
+#[cfg(test)]
+mod install_tests;
+#[cfg(test)]
+mod session_tests;
 #[cfg(test)]
 mod tests;
 

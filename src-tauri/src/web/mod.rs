@@ -126,6 +126,7 @@ async fn session(socket: WebSocket, backend: Backend) {
     });
     // Terminals this browser tab opened; they end with the tab.
     let owned: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+    let chats: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
     log::info!("[web] client connected");
 
     while let Some(Ok(msg)) = rx.next().await {
@@ -140,6 +141,13 @@ async fn session(socket: WebSocket, backend: Backend) {
                     if let Some(id) = effects.killed_pty {
                         ids.remove(&id);
                     }
+                    let mut chat_ids = chats.lock();
+                    if let Some(id) = effects.started_chat {
+                        chat_ids.insert(id);
+                    }
+                    if let Some(id) = effects.stopped_chat {
+                        chat_ids.remove(&id);
+                    }
                     json!({ "type": "result", "id": req.id, "ok": ok })
                 }
                 Err(error) => json!({ "type": "result", "id": req.id, "error": error }),
@@ -153,6 +161,9 @@ async fn session(socket: WebSocket, backend: Backend) {
 
     for id in owned.lock().drain() {
         backend.pty.kill(&id);
+    }
+    for id in chats.lock().drain() {
+        backend.chats.stop(&id);
     }
     drop(out);
     let _ = writer.await;

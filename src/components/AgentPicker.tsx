@@ -66,7 +66,6 @@ export function AgentPicker({ agents, loading, error, selectedId, onSelect, onRe
       {open && (
         <div className="agent-menu">
           <input
-            // biome-ignore lint/a11y/noAutofocus: the menu opened because the user is choosing
             autoFocus
             aria-label="Search agents"
             placeholder={`Search ${agents.length} agents`}

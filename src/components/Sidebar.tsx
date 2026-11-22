@@ -49,7 +49,6 @@ export function Sidebar({ projects, activeId, onSelect, onAdd, onRemove }: Props
       {adding && (
         <form className="add-project" onSubmit={submit}>
           <input
-            // biome-ignore lint/a11y/noAutofocus: the form opens because the user asked to add one
             autoFocus
             aria-label="Project folder"
             placeholder="Folder path, e.g. C:\work\app"

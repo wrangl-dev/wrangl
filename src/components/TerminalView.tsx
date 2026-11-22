@@ -25,7 +25,6 @@ export function TerminalView({ active, onExit, cwd }: Props) {
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the shell starts once, in the folder the tab was opened for
   useEffect(() => {
     const el = host.current;
     if (!el) return;

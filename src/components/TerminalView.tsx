@@ -8,6 +8,8 @@ interface Props {
   /** Only the active tab is visible; hidden tabs keep their shell running. */
   active: boolean;
   onExit: (code: number | null) => void;
+  /** Folder the shell starts in; the home folder when missing. */
+  cwd?: string;
 }
 
 function cssColor(name: string, fallback: string): string {
@@ -16,13 +18,14 @@ function cssColor(name: string, fallback: string): string {
 }
 
 /** One xterm.js view bound to one shell. The shell lives as long as the view is mounted. */
-export function TerminalView({ active, onExit }: Props) {
+export function TerminalView({ active, onExit, cwd }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the shell starts once, in the folder the tab was opened for
   useEffect(() => {
     const el = host.current;
     if (!el) return;
@@ -59,7 +62,7 @@ export function TerminalView({ active, onExit }: Props) {
         term.write('Terminals need the Wrangl desktop app or the wrangl-web dev server.\r\n');
         return;
       }
-      const newId = await spawnPty({ cols: term.cols, rows: term.rows }, (event) => {
+      const newId = await spawnPty({ cols: term.cols, rows: term.rows, cwd }, (event) => {
         // A view that was unmounted killed its own shell; that exit is not news for the tab.
         if (disposed) return;
         if (event.kind === 'data') term.write(event.data);

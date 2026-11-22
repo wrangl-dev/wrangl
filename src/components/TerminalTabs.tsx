@@ -1,25 +1,42 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Icon } from './Icon';
 import { TerminalView } from './TerminalView';
 
 interface Tab {
   key: number;
   title: string;
+  cwd?: string;
   exited: boolean;
 }
 
-const tabFor = (key: number): Tab => ({ key, title: `Terminal ${key}`, exited: false });
+interface Props {
+  /** The panel is open. Closed panels keep their shells running. */
+  visible: boolean;
+  /** Folder new tabs start in (the active project). */
+  cwd?: string;
+  onHide: () => void;
+}
 
-/** Terminal tabs. Every tab stays mounted so switching never restarts a shell. */
-export function TerminalTabs() {
-  const [tabs, setTabs] = useState<Tab[]>([tabFor(1)]);
-  const [activeKey, setActiveKey] = useState(1);
-  const nextKey = useRef(2);
+/** Terminal tabs. Every tab stays mounted so switching or hiding never restarts a shell. */
+export function TerminalTabs({ visible, cwd, onHide }: Props) {
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeKey, setActiveKey] = useState(0);
+  const nextKey = useRef(1);
 
   const add = useCallback(() => {
-    const tab = tabFor(nextKey.current++);
-    setTabs((t) => [...t, tab]);
-    setActiveKey(tab.key);
-  }, []);
+    const key = nextKey.current++;
+    setTabs((t) => [...t, { key, title: `Terminal ${key}`, cwd, exited: false }]);
+    setActiveKey(key);
+  }, [cwd]);
+
+  // The first time the panel opens, start a terminal in the current project.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (visible && !opened.current) {
+      opened.current = true;
+      add();
+    }
+  }, [visible, add]);
 
   const close = useCallback(
     (key: number) => {
@@ -38,32 +55,38 @@ export function TerminalTabs() {
   }, []);
 
   return (
-    <section className="terminals" aria-label="Terminal">
-      <div className="tabbar" role="tablist">
-        {tabs.map((tab) => (
-          <div key={tab.key} className="tab" data-active={tab.key === activeKey}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab.key === activeKey}
-              className="tab-label"
-              onClick={() => setActiveKey(tab.key)}
-            >
-              {tab.title}
-              {tab.exited && <span className="muted"> (exited)</span>}
-            </button>
-            <button
-              type="button"
-              className="tab-close"
-              aria-label={`Close ${tab.title}`}
-              onClick={() => close(tab.key)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        <button type="button" className="tab-add" aria-label="New terminal" onClick={add}>
-          +
+    <section className="terminals" aria-label="Terminal" hidden={!visible}>
+      <div className="tabbar">
+        <div className="tabs" role="tablist">
+          {tabs.map((tab) => (
+            <div key={tab.key} className="tab" data-active={tab.key === activeKey}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab.key === activeKey}
+                className="tab-label"
+                title={tab.cwd}
+                onClick={() => setActiveKey(tab.key)}
+              >
+                {tab.title}
+                {tab.exited && <span className="muted"> (exited)</span>}
+              </button>
+              <button
+                type="button"
+                className="tab-close"
+                aria-label={`Close ${tab.title}`}
+                onClick={() => close(tab.key)}
+              >
+                <Icon name="close" size={11} />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="tab-add" aria-label="New terminal" onClick={add}>
+            <Icon name="plus" size={13} />
+          </button>
+        </div>
+        <button type="button" className="icon-button" aria-label="Hide terminal" onClick={onHide}>
+          <Icon name="close" size={13} />
         </button>
       </div>
 
@@ -78,7 +101,8 @@ export function TerminalTabs() {
         {tabs.map((tab) => (
           <TerminalView
             key={tab.key}
-            active={tab.key === activeKey}
+            active={visible && tab.key === activeKey}
+            cwd={tab.cwd}
             onExit={() => markExited(tab.key)}
           />
         ))}

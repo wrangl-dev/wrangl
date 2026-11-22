@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!dist",
+      "!src-tauri/target",
+      "!src-tauri/gen",
+      "!legacy",
+      "!launch-kit",
+      "!backup",
+      "!catatan-lokal",
+      "!landing-prototype",
+      "!studio-lokal"
+    ]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "linter": { "rules": { "preset": "none" } }
+}

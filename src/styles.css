@@ -1,0 +1,87 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --surface: #12161b;
+  --border: #1f262e;
+  --text: #e6e9ed;
+  --muted: #7d8793;
+  --accent: #c8ff3d;
+  --danger: #ff6b6b;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px / 1.5 var(--font);
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr 24px;
+  height: 100%;
+}
+
+.sidebar {
+  grid-row: 1;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+}
+
+.brand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.brand-mark {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.workspace {
+  display: flex;
+  min-width: 0;
+}
+
+.panel {
+  flex: 1;
+  padding: 12px;
+  font-family: var(--mono);
+}
+
+.statusbar {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--danger);
+}

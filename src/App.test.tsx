@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { App } from './App';
 
+vi.mock('./components/TerminalView', () => ({ TerminalView: () => <div /> }));
+
 describe('App', () => {
   it('shows the shell with browser fallback info outside Tauri', async () => {
     render(<App />);

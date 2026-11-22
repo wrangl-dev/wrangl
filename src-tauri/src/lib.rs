@@ -1,9 +1,12 @@
 //! Wrangl desktop runtime.
 
 pub mod app_info;
+pub mod pty;
 
 #[cfg(test)]
 mod app_info_tests;
+
+use tauri::Manager;
 
 /// Start the desktop app.
 ///
@@ -16,11 +19,23 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![app_info::app_info])
+        .manage(pty::PtyManager::default())
+        .invoke_handler(tauri::generate_handler![
+            app_info::app_info,
+            pty::commands::pty_spawn,
+            pty::commands::pty_write,
+            pty::commands::pty_resize,
+            pty::commands::pty_kill,
+        ])
         .setup(|_app| {
             log::info!("[app] started v{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Wrangl");
+        .build(tauri::generate_context!())
+        .expect("error while building Wrangl")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<pty::PtyManager>().kill_all();
+            }
+        });
 }

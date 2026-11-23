@@ -38,7 +38,27 @@ pub const WALLET_TOKEN_ENV: &str = "WRANGL_WALLET_TOKEN";
 pub enum Tool {
     Chain(ChainTool),
     Wallet(WalletTool),
+    Swap(SwapTool),
 }
+
+/// The swap tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapTool {
+    Quote,
+    Swap,
+}
+
+impl SwapTool {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Quote => "swap_quote",
+            Self::Swap => "swap_tokens",
+        }
+    }
+}
+
+const SWAP: [SwapTool; 2] = [SwapTool::Quote, SwapTool::Swap];
 
 impl Tool {
     #[must_use]
@@ -46,6 +66,7 @@ impl Tool {
         match self {
             Self::Chain(t) => t.name(),
             Self::Wallet(t) => t.name(),
+            Self::Swap(t) => t.name(),
         }
     }
 }
@@ -111,12 +132,34 @@ fn wallet_spec(tool: WalletTool) -> Value {
     })
 }
 
+fn swap_spec(tool: SwapTool) -> Value {
+    let (description, input_schema, read_only) = match tool {
+        SwapTool::Quote => (
+            super::swap::QUOTE_DESCRIPTION,
+            schema::<super::swap::SwapQuoteInput>(),
+            true,
+        ),
+        SwapTool::Swap => (
+            super::swap::SWAP_DESCRIPTION,
+            schema::<super::swap::SwapTokensInput>(),
+            false,
+        ),
+    };
+    json!({
+        "name": tool.name(),
+        "description": description,
+        "inputSchema": input_schema,
+        "annotations": { "readOnlyHint": read_only, "openWorldHint": true },
+    })
+}
+
 /// Every tool this server lists.
 #[must_use]
 pub fn tool_specs() -> Vec<Value> {
     ALL.into_iter()
         .map(tool_spec)
         .chain(WALLET.into_iter().map(wallet_spec))
+        .chain(SWAP.into_iter().map(swap_spec))
         .collect()
 }
 
@@ -124,6 +167,7 @@ fn tool_named(name: &str) -> Option<Tool> {
     ALL.into_iter()
         .map(Tool::Chain)
         .chain(WALLET.into_iter().map(Tool::Wallet))
+        .chain(SWAP.into_iter().map(Tool::Swap))
         .find(|t| t.name() == name)
 }
 
@@ -203,6 +247,7 @@ where
                         match tool {
                             Tool::Chain(t) => client::run(sources, t, args).await,
                             Tool::Wallet(t) => wallet.run(t, args).await,
+                            Tool::Swap(t) => run_swap(sources, wallet, t, args).await,
                         }
                     }
                 })
@@ -294,5 +339,59 @@ impl WalletLink {
         } else {
             Err(body)
         }
+    }
+}
+
+async fn run_swap(
+    sources: &Sources,
+    wallet: &WalletLink,
+    tool: SwapTool,
+    args: Value,
+) -> Result<Value, String> {
+    let kyber = super::swap::Kyber::default();
+    match tool {
+        SwapTool::Quote => {
+            let input =
+                serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+            super::swap::quote(sources, &kyber, input).await
+        }
+        SwapTool::Swap => {
+            let input =
+                serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+            super::swap::swap(
+                sources,
+                &kyber,
+                wallet,
+                input,
+                super::swap::Waits::default(),
+            )
+            .await
+        }
+    }
+}
+
+impl super::swap::SwapWallet for WalletLink {
+    async fn address(&self) -> Result<Option<String>, String> {
+        let answer = self.run(WalletTool::Address, json!({})).await?;
+        Ok(answer["address"].as_str().map(str::to_string))
+    }
+
+    async fn propose(
+        &self,
+        to: &str,
+        value_wei: u128,
+        data: &str,
+        description: &str,
+    ) -> Result<Value, String> {
+        self.run(
+            WalletTool::SendTransaction,
+            json!({
+                "to": to,
+                "value_eth": crate::wallet::tools::format_eth(value_wei),
+                "data": data,
+                "description": description,
+            }),
+        )
+        .await
     }
 }

@@ -3,6 +3,7 @@ import { ChatHome } from './components/ChatHome';
 import { Icon } from './components/Icon';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
+import { UpdateButton } from './components/UpdateButton';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
 import {
   addProject,
@@ -111,6 +112,7 @@ export function App() {
           Robinhood Chain {info.chainId}
         </span>
         <span className="status-item muted">v{info.version}</span>
+        <UpdateButton />
         <button
           type="button"
           className="status-button"

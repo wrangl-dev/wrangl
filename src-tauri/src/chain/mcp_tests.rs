@@ -15,7 +15,7 @@ async fn ask(message: Value) -> Option<Value> {
 }
 
 #[test]
-fn lists_six_read_only_chain_tools_and_two_wallet_tools() {
+fn lists_chain_wallet_and_swap_tools() {
     let tools = tool_specs();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
@@ -28,12 +28,14 @@ fn lists_six_read_only_chain_tools_and_two_wallet_tools() {
             "chain_new_pools",
             "chain_call",
             "wallet_address",
-            "wallet_send_transaction"
+            "wallet_send_transaction",
+            "swap_quote",
+            "swap_tokens"
         ]
     );
     for t in &tools {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
-        let proposes = t["name"] == "wallet_send_transaction";
+        let proposes = t["name"] == "wallet_send_transaction" || t["name"] == "swap_tokens";
         assert_eq!(t["annotations"]["readOnlyHint"], !proposes, "{t}");
         assert!(t["description"].as_str().unwrap().len() > 40);
     }
@@ -64,7 +66,7 @@ async fn answers_initialize_list_and_calls() {
     let list = ask(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(8));
+    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(10));
 
     let ok = ask(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": { "name": "chain_status" } }))
@@ -125,7 +127,7 @@ async fn serves_newline_delimited_json_until_input_ends() {
     assert_eq!(lines[1]["error"]["code"], -32700);
     assert_eq!(
         lines[2]["result"]["tools"].as_array().map(Vec::len),
-        Some(8)
+        Some(10)
     );
 }
 

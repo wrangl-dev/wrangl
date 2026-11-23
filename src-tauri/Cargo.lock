@@ -6112,6 +6112,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures-util",
+ "hex",
  "log",
  "parking_lot",
  "portable-pty",

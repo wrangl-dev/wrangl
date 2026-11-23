@@ -104,10 +104,20 @@ fn acp_agent(line: &CommandLine, stderr: Arc<Mutex<VecDeque<String>>>) -> AcpAge
 }
 
 impl AgentSessions {
-    /// Start `line` as an ACP agent with a session in `cwd`. Returns the session id at once;
+    /// Start `line` as an ACP agent with a session in `cwd`. `tool_env` goes to Wrangl's tool
+    /// server for this chat (RPC settings, the wallet link). Returns the session id at once;
     /// progress arrives as events.
-    pub fn start(&self, line: CommandLine, cwd: PathBuf, emit: EventFn) -> String {
+    pub fn start(
+        &self,
+        line: CommandLine,
+        cwd: PathBuf,
+        tool_env: Vec<(String, String)>,
+        emit: EventFn,
+    ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
+        let mut tool_env = tool_env;
+        tool_env.push((crate::chain::mcp::CHAT_ID_ENV.to_string(), id.clone()));
+        let tools = wrangl_tools(tool_env);
         let (tx, rx) = mpsc::unbounded_channel();
         let permissions = Arc::new(Mutex::new(HashMap::new()));
         let auth_methods = Arc::new(Mutex::new(Value::Null));
@@ -133,7 +143,16 @@ impl AgentSessions {
             emit(AgentEvent::Status {
                 state: "starting".into(),
             });
-            let result = run(agent, cwd, rx, permissions, auth_methods, Arc::clone(&emit)).await;
+            let result = run(
+                agent,
+                cwd,
+                tools,
+                rx,
+                permissions,
+                auth_methods,
+                Arc::clone(&emit),
+            )
+            .await;
             sessions.lock().remove(&session_key);
             let message = result.err().map(|e| {
                 let tail: Vec<String> = stderr.lock().iter().cloned().collect();
@@ -258,17 +277,14 @@ pub fn terminal_login(
     Ok(login)
 }
 
-/// Wrangl's own MCP server (the chain tools), offered to every session: this executable with
-/// `--mcp`. Empty when the executable cannot be found, so a chat still works without the tools.
-fn wrangl_tools() -> Vec<McpServer> {
+/// Wrangl's own MCP server (chain and wallet tools), offered to every session: this executable
+/// with `--mcp`. Empty when the executable cannot be found, so a chat still works without it.
+/// Only `env` reaches it from Wrangl.
+fn wrangl_tools(env: Vec<(String, String)>) -> Vec<McpServer> {
     let Ok(exe) = std::env::current_exe() else {
         return vec![];
     };
-    // The user's own RPC and market key (Settings, else the environment) reach the tools;
-    // nothing else does.
-    let env = crate::settings::SettingsStore::default()
-        .load()
-        .tool_env()
+    let env = env
         .into_iter()
         .map(|(name, value)| EnvVariable::new(name, value))
         .collect();
@@ -283,9 +299,11 @@ fn is_auth_required(error: &agent_client_protocol::Error) -> bool {
     error.code == ErrorCode::AuthRequired
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     agent: AcpAgent,
     cwd: PathBuf,
+    tools: Vec<McpServer>,
     mut commands: mpsc::UnboundedReceiver<Command>,
     permissions: Arc<Mutex<HashMap<String, oneshot::Sender<Option<String>>>>>,
     known_auth: Arc<Mutex<Value>>,
@@ -350,7 +368,7 @@ async fn run(
             // Open the session; when the agent wants a sign-in, wait for the user's choice.
             let session_id: SessionId = loop {
                 match cx
-                    .send_request(NewSessionRequest::new(cwd.clone()).mcp_servers(wrangl_tools()))
+                    .send_request(NewSessionRequest::new(cwd.clone()).mcp_servers(tools.clone()))
                     .block_task()
                     .await
                 {

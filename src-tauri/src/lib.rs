@@ -7,6 +7,7 @@ pub mod chain;
 pub mod paths;
 pub mod pty;
 pub mod settings;
+pub mod wallet;
 pub mod web;
 
 #[cfg(test)]

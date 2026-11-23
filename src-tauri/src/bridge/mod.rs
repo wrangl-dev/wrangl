@@ -36,6 +36,10 @@ pub const COMMANDS: &[&str] = &[
     "settings_get",
     "settings_set",
     "chain_test_rpc",
+    "wallet_status",
+    "wallet_open_signer",
+    "wallet_disconnect",
+    "wallet_reject",
 ];
 
 /// Pushes an event to the client's channel number `channel`.
@@ -48,6 +52,7 @@ pub struct Backend {
     pub agents: RegistryStore,
     pub chats: AgentSessions,
     pub settings: crate::settings::SettingsStore,
+    pub wallet: crate::wallet::WalletHandle,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -140,6 +145,11 @@ struct TestRpcArgs {
     rpc_url: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct WalletRejectArgs {
+    id: String,
+}
+
 #[derive(Deserialize, Default)]
 struct AgentListArgs {
     #[serde(default)]
@@ -226,7 +236,21 @@ pub async fn dispatch(
                     });
                 })
                 .await?;
-            let id = backend.chats.start(line, cwd, Arc::new(emit));
+            let mut tool_env: Vec<(String, String)> = backend
+                .settings
+                .load()
+                .tool_env()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            match backend.wallet.agent_endpoint() {
+                Ok((url, token)) => {
+                    tool_env.push((crate::chain::mcp::WALLET_URL_ENV.into(), url));
+                    tool_env.push((crate::chain::mcp::WALLET_TOKEN_ENV.into(), token));
+                }
+                Err(e) => log::warn!("[wallet] tools start without the wallet: {e}"),
+            }
+            let id = backend.chats.start(line, cwd, tool_env, Arc::new(emit));
             effects.started_chat = Some(id.clone());
             json!(id)
         }
@@ -272,6 +296,7 @@ pub async fn dispatch(
         "agent_stop" => {
             let a: ChatArgs = args(cmd, input)?;
             backend.chats.stop(&a.session_id);
+            backend.wallet.cancel_session(&a.session_id);
             effects.stopped_chat = Some(a.session_id);
             Value::Null
         }
@@ -307,6 +332,24 @@ pub async fn dispatch(
             let sources = crate::chain::client::Sources::from_settings(url.as_deref(), None);
             crate::chain::client::run(&sources, crate::chain::tools::ChainTool::Status, json!({}))
                 .await?
+        }
+        "wallet_status" => {
+            serde_json::to_value(backend.wallet.snapshot()).map_err(|e| e.to_string())?
+        }
+        "wallet_open_signer" => {
+            backend.wallet.open_signer()?;
+            Value::Null
+        }
+        "wallet_disconnect" => {
+            backend.wallet.set_address(None)?;
+            serde_json::to_value(backend.wallet.snapshot()).map_err(|e| e.to_string())?
+        }
+        "wallet_reject" => {
+            let a: WalletRejectArgs = args(cmd, input)?;
+            backend
+                .wallet
+                .resolve(&a.id, crate::wallet::TxOutcome::Rejected);
+            serde_json::to_value(backend.wallet.snapshot()).map_err(|e| e.to_string())?
         }
         other => return Err(format!("unknown command {other}")),
     };

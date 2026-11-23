@@ -42,6 +42,7 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .manage(bridge::Backend::default())
         .invoke_handler(tauri::generate_handler![bridge])
         .setup(|_app| {

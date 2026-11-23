@@ -1,5 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import type { AgentEvent } from '../lib/chat';
+import { ChatStore } from '../lib/chat-store';
+import type { Project } from '../lib/projects';
 import { ChatHome } from './ChatHome';
 
 let push: (e: AgentEvent) => void = () => {};
@@ -50,20 +53,27 @@ vi.mock('../lib/chat', async (orig) => ({
 
 const project = { id: 'p', name: 'storefront', path: '/work/storefront' };
 
+/** ChatHome plus the parent's job: remember which chat was created. */
+function Harness({ project: p }: { project: Project | null }) {
+  const [store] = useState(() => new ChatStore());
+  const [chatId, setChatId] = useState<string | null>(null);
+  return <ChatHome project={p} chatId={chatId} onChatCreated={setChatId} store={store} />;
+}
+
 describe('ChatHome', () => {
   beforeEach(() => {
     calls.length = 0;
   });
 
   it('starts the agent in the project on the first message and streams the answer', async () => {
-    render(<ChatHome project={project} />);
+    render(<Harness project={project} />);
     await screen.findByRole('button', { name: /Fake Agent/ });
 
     const box = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(box, { target: { value: 'Check a token' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    expect(await screen.findByText('Check a token')).toBeInTheDocument();
+    expect(await screen.findByText('Check a token', { selector: '.msg-user' })).toBeInTheDocument();
     await vi.waitFor(() => expect(calls.map((c) => c.cmd)).toEqual(['start', 'prompt']));
     expect(calls[0].args).toEqual(['fake', '/work/storefront']);
     expect(calls[1].args).toEqual(['session-1', 'Check a token']);
@@ -82,10 +92,11 @@ describe('ChatHome', () => {
     });
     expect(screen.getByText('Looks safe.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByLabelText('Chat title')).toHaveTextContent('Check a token');
   });
 
   it('shows a permission request and sends the choice', async () => {
-    render(<ChatHome project={project} />);
+    render(<Harness project={project} />);
     await screen.findByRole('button', { name: /Fake Agent/ });
     const box = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(box, { target: { value: 'list files' } });
@@ -111,7 +122,7 @@ describe('ChatHome', () => {
   });
 
   it('stop cancels the turn', async () => {
-    render(<ChatHome project={project} />);
+    render(<Harness project={project} />);
     await screen.findByRole('button', { name: /Fake Agent/ });
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'go' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -120,7 +131,7 @@ describe('ChatHome', () => {
   });
 
   it('cannot send without a project', async () => {
-    render(<ChatHome project={null} />);
+    render(<Harness project={null} />);
     await screen.findByRole('button', { name: /Fake Agent/ });
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'hi' } });
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();

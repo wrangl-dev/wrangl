@@ -3,6 +3,7 @@
 //! or to CoinGecko's on-chain API when `COINGECKO_API_KEY` is set. Those values
 //! never leave this module: replies and logs name only which source answered.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -33,11 +34,28 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
-/// Where this call's reads go. `rpc_label` / `market_label` are what the
-/// agent is told; the URL and key stay here.
+/// Keyless public RPCs that also serve Robinhood Chain, tried in order when the official one
+/// does not answer (some internet providers block `chain.robinhood.com`).
+pub const FALLBACK_RPCS: &[(&str, &str)] = &[
+    (
+        "https://robinhood-rpc.publicnode.com",
+        "public fallback (PublicNode)",
+    ),
+    ("https://robinhood.drpc.org", "public fallback (dRPC)"),
+];
+
+/// One RPC to try, and what the agent is told it is.
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    pub url: String,
+    pub label: &'static str,
+}
+
+/// Where this call's reads go. Labels are what the agent is told; URLs and keys stay here.
 pub struct Sources {
-    rpc_url: String,
-    pub rpc_label: &'static str,
+    endpoints: Vec<Endpoint>,
+    /// The endpoint that answered last; tried first next time.
+    current: AtomicUsize,
     market_root: &'static str,
     market_key: Option<String>,
     market_label: &'static str,
@@ -47,9 +65,23 @@ impl Sources {
     /// The public RPC and GeckoTerminal.
     #[must_use]
     pub fn public() -> Self {
+        let official = Endpoint {
+            url: PUBLIC_RPC_URL.to_string(),
+            label: "public",
+        };
+        let fallbacks = FALLBACK_RPCS.iter().map(|(url, label)| Endpoint {
+            url: (*url).to_string(),
+            label,
+        });
+        Self::with_endpoints(std::iter::once(official).chain(fallbacks).collect())
+    }
+
+    /// Read through exactly these RPCs, in order.
+    #[must_use]
+    pub fn with_endpoints(endpoints: Vec<Endpoint>) -> Self {
         Self {
-            rpc_url: PUBLIC_RPC_URL.to_string(),
-            rpc_label: "public",
+            endpoints,
+            current: AtomicUsize::new(0),
             market_root: GECKOTERMINAL_API,
             market_key: None,
             market_label: "geckoterminal",
@@ -61,8 +93,12 @@ impl Sources {
     pub fn from_settings(rpc_url: Option<&str>, coingecko_key: Option<&str>) -> Self {
         let mut sources = Self::public();
         if let Some(url) = rpc_url.map(str::trim).filter(|u| u.starts_with("http")) {
-            sources.rpc_url = url.to_string();
-            sources.rpc_label = "your ROBINHOOD_RPC_URL";
+            // The user's own RPC only: no silent switch to someone else's.
+            sources.endpoints = vec![Endpoint {
+                url: url.to_string(),
+                label: "your ROBINHOOD_RPC_URL",
+            }];
+            sources.current = AtomicUsize::new(0);
         }
         if let Some(key) = coingecko_key.map(str::trim).filter(|k| !k.is_empty()) {
             sources.market_root = COINGECKO_ONCHAIN_API;
@@ -70,6 +106,20 @@ impl Sources {
             sources.market_label = "coingecko (your COINGECKO_API_KEY)";
         }
         sources
+    }
+
+    /// How many RPCs are tried.
+    #[must_use]
+    pub fn endpoint_count(&self) -> usize {
+        self.endpoints.len()
+    }
+
+    /// What the agent is told about the RPC in use.
+    #[must_use]
+    pub fn rpc_label(&self) -> &'static str {
+        self.endpoints
+            .get(self.current.load(Ordering::Relaxed))
+            .map_or("none", |e| e.label)
     }
 
     /// Sources from the `ROBINHOOD_RPC_URL` and `COINGECKO_API_KEY` environment variables.
@@ -96,7 +146,7 @@ pub async fn run(sources: &Sources, tool: ChainTool, input: Value) -> Result<Val
         log::info!(
             "[chain] {} failed (rpc {}): {message}",
             tool.name(),
-            sources.rpc_label
+            sources.rpc_label()
         );
     }
     answer
@@ -122,34 +172,57 @@ pub async fn rpc_batch(
             json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
         })
         .collect();
+    let count = sources.endpoints.len();
+    if count == 0 {
+        return Err("no RPC to read from".into());
+    }
+    let first = sources.current.load(Ordering::Relaxed) % count;
+    let mut errors = Vec::new();
+    for step in 0..count {
+        let index = (first + step) % count;
+        let endpoint = &sources.endpoints[index];
+        match post_batch(endpoint, &body, calls.len()).await {
+            Ok(out) => {
+                if index != first {
+                    log::info!("[chain] switched to {}", endpoint.label);
+                }
+                sources.current.store(index, Ordering::Relaxed);
+                return Ok(out);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    Err(errors.join("; "))
+}
+
+/// One JSON-RPC batch to one endpoint.
+async fn post_batch(
+    endpoint: &Endpoint,
+    body: &[Value],
+    calls: usize,
+) -> Result<Vec<Result<Value, String>>, String> {
     let response = client()
-        .post(&sources.rpc_url)
+        .post(&endpoint.url)
         .json(&body)
         .send()
         .await
-        .map_err(|e| {
-            format!(
-                "RPC ({}) unreachable: {}",
-                sources.rpc_label,
-                e.without_url()
-            )
-        })?;
+        .map_err(|e| format!("RPC ({}) unreachable: {}", endpoint.label, e.without_url()))?;
     let status = response.status();
     if !status.is_success() {
         let hint = if status.as_u16() == 429 {
-            " (rate limited: set your own ROBINHOOD_RPC_URL under Automations > Project secrets)"
+            " (rate limited: add your own RPC in Wrangl Settings)"
         } else {
             ""
         };
         return Err(format!(
             "RPC ({}) answered HTTP {status}{hint}",
-            sources.rpc_label
+            endpoint.label
         ));
     }
     let replies: Value = response.json().await.map_err(|e| {
         format!(
             "RPC ({}) sent invalid JSON: {}",
-            sources.rpc_label,
+            endpoint.label,
             e.without_url()
         )
     })?;
@@ -159,7 +232,7 @@ pub async fn rpc_batch(
         other => {
             return Err(format!(
                 "RPC ({}) did not answer the batch: {}",
-                sources.rpc_label,
+                endpoint.label,
                 other["error"]["message"]
                     .as_str()
                     .unwrap_or("unexpected reply")
@@ -167,7 +240,7 @@ pub async fn rpc_batch(
         }
     };
     let mut out: Vec<Result<Value, String>> =
-        vec![Err("no reply for this call".to_string()); calls.len()];
+        vec![Err("no reply for this call".to_string()); calls];
     for reply in replies {
         let Some(id) = reply["id"].as_u64().and_then(|i| usize::try_from(i).ok()) else {
             continue;
@@ -235,7 +308,7 @@ async fn status(sources: &Sources) -> Result<Value, String> {
     let chain_id = string_result(&replies[0]).and_then(decode_u64);
     let gas_wei = string_result(&replies[2]).and_then(hex_to_decimal);
     let mut out = json!({
-        "rpc": sources.rpc_label,
+        "rpc": sources.rpc_label(),
         "chain_id": chain_id,
         "latest_block": string_result(&replies[1]).and_then(decode_u64),
         "gas_price_gwei": gas_wei.map(|wei| format_units(&wei, 9)),
@@ -278,7 +351,7 @@ async fn token(sources: &Sources, input: ChainTokenInput) -> Result<Value, Strin
             "address": address,
             "is_contract": false,
             "note": "no code at this address: it is a wallet or nothing is deployed here",
-            "rpc": sources.rpc_label,
+            "rpc": sources.rpc_label(),
         }));
     }
     let decimals = string_result(&replies[3]).and_then(decode_u64);
@@ -305,7 +378,7 @@ async fn token(sources: &Sources, input: ChainTokenInput) -> Result<Value, Strin
         "ownership_renounced": owner.as_deref().map(is_burn_owner),
         "eip1967_implementation": implementation,
         "code": facts,
-        "rpc": sources.rpc_label,
+        "rpc": sources.rpc_label(),
         "note": "privileged_functions are read from the bytecode's dispatcher (for a proxy or \
     clone, from its implementation too, under implementation_code). Hints, not an audit.",
     });
@@ -418,7 +491,7 @@ async fn balance(sources: &Sources, input: ChainBalanceInput) -> Result<Value, S
         "eth": native_raw.as_deref().map(|raw| format_units(raw, 18)),
         "eth_wei": native_raw,
         "tokens": token_rows,
-        "rpc": sources.rpc_label,
+        "rpc": sources.rpc_label(),
     }))
 }
 
@@ -436,7 +509,7 @@ async fn tx(sources: &Sources, input: ChainTxInput) -> Result<Value, String> {
         .clone()
         .map_err(|e| format!("eth_getTransactionByHash: {e}"))?;
     if tx.is_null() {
-        return Ok(json!({ "hash": hash, "found": false, "rpc": sources.rpc_label }));
+        return Ok(json!({ "hash": hash, "found": false, "rpc": sources.rpc_label() }));
     }
     let receipt = replies[1].clone().unwrap_or(Value::Null);
     let value_wei = tx["value"].as_str().and_then(hex_to_decimal);
@@ -459,7 +532,7 @@ async fn tx(sources: &Sources, input: ChainTxInput) -> Result<Value, String> {
         "gas_used": receipt["gasUsed"].as_str().and_then(decode_u64),
         "contract_created": receipt["contractAddress"],
         "log_count": receipt["logs"].as_array().map(Vec::len),
-        "rpc": sources.rpc_label,
+        "rpc": sources.rpc_label(),
     }))
 }
 
@@ -504,8 +577,8 @@ async fn call(sources: &Sources, input: ChainCallInput) -> Result<Value, String>
     }
     let replies = rpc_batch(sources, &[("eth_call", json!([params, "latest"]))]).await?;
     Ok(match &replies[0] {
-        Ok(result) => json!({ "ok": true, "result": result, "rpc": sources.rpc_label }),
-        Err(e) => json!({ "ok": false, "reverted": e, "rpc": sources.rpc_label }),
+        Ok(result) => json!({ "ok": true, "result": result, "rpc": sources.rpc_label() }),
+        Err(e) => json!({ "ok": false, "reverted": e, "rpc": sources.rpc_label() }),
     })
 }
 

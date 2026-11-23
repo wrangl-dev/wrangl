@@ -5,6 +5,8 @@ pub mod mcp;
 pub mod tools;
 
 #[cfg(test)]
+mod client_tests;
+#[cfg(test)]
 mod mcp_tests;
 #[cfg(test)]
 mod tools_tests;

@@ -25,13 +25,31 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi", "dmg", "app", "appimage", "deb", "rpm"],
+    "createUpdaterArtifacts": true,
+    "publisher": "Wrangl",
+    "homepage": "https://wrangl-landing.pages.dev",
+    "category": "DeveloperTool",
+    "shortDescription": "The agent terminal for Robinhood Chain",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwNkY4QUZCNzM3RTQ2NDcKUldSSFJuNXorNHB2a0J2bEYwKzJVRGw1SlBycnMxSUozd0wwZXgyZ1E0dHYzc1BrMFdMVjUwM0UK",
+      "endpoints": ["https://github.com/wrangl-dev/wrangl/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

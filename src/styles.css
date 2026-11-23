@@ -941,3 +941,14 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
 }
+
+.update-button {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.update-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg);
+  filter: brightness(1.1);
+}

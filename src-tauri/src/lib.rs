@@ -43,6 +43,9 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        // Updates come from GitHub releases, signed with the Wrangl release key.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(bridge::Backend::default())
         .invoke_handler(tauri::generate_handler![bridge])
         .setup(|_app| {

@@ -32,6 +32,7 @@ fn start(
     let id = sessions.start(
         line,
         std::env::temp_dir(),
+        vec![],
         Arc::new(move |e| {
             let _ = tx.send(e);
         }),

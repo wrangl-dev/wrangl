@@ -20,6 +20,10 @@ interface Props {
   onRemove: (id: string) => void;
   settingsOpen?: boolean;
   onOpenSettings?: () => void;
+  walletOpen?: boolean;
+  onOpenWallet?: () => void;
+  /** Proposals waiting for the user's signature. */
+  walletPending?: number;
 }
 
 export function Sidebar({
@@ -36,6 +40,9 @@ export function Sidebar({
   onRemove,
   settingsOpen = false,
   onOpenSettings,
+  walletOpen = false,
+  onOpenWallet,
+  walletPending = 0,
 }: Props) {
   const [typing, setTyping] = useState(!pickFolder && projects.length === 0);
   const [path, setPath] = useState('');
@@ -192,6 +199,22 @@ export function Sidebar({
 
       {onOpenSettings && (
         <footer className="sidebar-foot">
+          {onOpenWallet && (
+            <button
+              type="button"
+              className="sidebar-link"
+              aria-pressed={walletOpen}
+              onClick={onOpenWallet}
+            >
+              <Icon name="wallet" size={14} />
+              Wallet
+              {walletPending > 0 && (
+                <span className="wallet-badge" aria-label={`${walletPending} to sign`}>
+                  {walletPending}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             className="sidebar-link"

@@ -5,6 +5,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
 import { UpdateButton } from './components/UpdateButton';
+import { WalletPage } from './components/WalletPage';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
 import { type ChatStore, chatStore, useChatStore } from './lib/chat-store';
 import { folderPicker } from './lib/folders';
@@ -15,6 +16,7 @@ import {
   removeProject,
   saveProjects,
 } from './lib/projects';
+import { useWalletStatus } from './lib/wallet';
 
 const ACTIVE_KEY = 'wrangl.activeProject.v1';
 
@@ -46,6 +48,18 @@ export function App({ store = chatStore, pickFolder }: Props) {
   const [terminalProjects, setTerminalProjects] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
+  const wallet = useWalletStatus(5000);
+  const walletPending = wallet.snapshot?.requests.length ?? 0;
+  // A proposal from an agent opens the Wallet page so it is not missed.
+  const [seenPending, setSeenPending] = useState(0);
+  useEffect(() => {
+    if (walletPending > seenPending) {
+      setWalletOpen(true);
+      setSettingsOpen(false);
+    }
+    setSeenPending(walletPending);
+  }, [walletPending, seenPending]);
 
   useEffect(() => {
     loadAppInfo()
@@ -131,7 +145,16 @@ export function App({ store = chatStore, pickFolder }: Props) {
         onAdd={add}
         onRemove={remove}
         settingsOpen={settingsOpen}
-        onOpenSettings={() => setSettingsOpen((o) => !o)}
+        onOpenSettings={() => {
+          setSettingsOpen((o) => !o);
+          setWalletOpen(false);
+        }}
+        walletOpen={walletOpen}
+        onOpenWallet={() => {
+          setWalletOpen((o) => !o);
+          setSettingsOpen(false);
+        }}
+        walletPending={walletPending}
       />
 
       <main className="workspace">
@@ -145,6 +168,7 @@ export function App({ store = chatStore, pickFolder }: Props) {
         />
         {/* Over the chat; chats and their agents keep running underneath. */}
         {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
+        {walletOpen && <WalletPage onClose={() => setWalletOpen(false)} />}
         {projects
           .filter((p) => terminalProjects.includes(p.id))
           .map((p) => (

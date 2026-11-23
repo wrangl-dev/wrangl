@@ -1,13 +1,13 @@
 use serde_json::{json, Value};
 
 use super::client::Sources;
-use super::mcp::{handle, serve, tool_specs};
+use super::mcp::{handle, serve, tool_specs, Tool, WalletLink};
 use super::tools::ChainTool;
 
 async fn ask(message: Value) -> Option<Value> {
     handle(&message, |tool, args| async move {
         match tool {
-            ChainTool::Status => Ok(json!({ "chain_id": 4663 })),
+            Tool::Chain(ChainTool::Status) => Ok(json!({ "chain_id": 4663 })),
             _ => Err(format!("{} got {args}", tool.name())),
         }
     })
@@ -15,7 +15,7 @@ async fn ask(message: Value) -> Option<Value> {
 }
 
 #[test]
-fn lists_six_read_only_chain_tools_with_object_schemas() {
+fn lists_six_read_only_chain_tools_and_two_wallet_tools() {
     let tools = tool_specs();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
@@ -26,14 +26,19 @@ fn lists_six_read_only_chain_tools_with_object_schemas() {
             "chain_balance",
             "chain_tx",
             "chain_new_pools",
-            "chain_call"
+            "chain_call",
+            "wallet_address",
+            "wallet_send_transaction"
         ]
     );
     for t in &tools {
         assert_eq!(t["inputSchema"]["type"], "object", "{t}");
-        assert_eq!(t["annotations"]["readOnlyHint"], true);
+        let proposes = t["name"] == "wallet_send_transaction";
+        assert_eq!(t["annotations"]["readOnlyHint"], !proposes, "{t}");
         assert!(t["description"].as_str().unwrap().len() > 40);
     }
+    let send = &tools[7]["inputSchema"];
+    assert_eq!(send["required"], json!(["to", "description"]));
     let token = &tools[1]["inputSchema"];
     assert!(token["properties"]["address"].is_object(), "{token}");
     assert_eq!(token["required"], json!(["address"]));
@@ -59,7 +64,7 @@ async fn answers_initialize_list_and_calls() {
     let list = ask(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(6));
+    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(8));
 
     let ok = ask(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": { "name": "chain_status" } }))
@@ -102,9 +107,14 @@ async fn serves_newline_delimited_json_until_input_ends() {
         "\n"
     );
     let mut out = Vec::new();
-    serve(input.as_bytes(), &mut out, Sources::public())
-        .await
-        .unwrap();
+    serve(
+        input.as_bytes(),
+        &mut out,
+        Sources::public(),
+        WalletLink::default(),
+    )
+    .await
+    .unwrap();
     let lines: Vec<Value> = String::from_utf8(out)
         .unwrap()
         .lines()
@@ -115,7 +125,7 @@ async fn serves_newline_delimited_json_until_input_ends() {
     assert_eq!(lines[1]["error"]["code"], -32700);
     assert_eq!(
         lines[2]["result"]["tools"].as_array().map(Vec::len),
-        Some(6)
+        Some(8)
     );
 }
 
@@ -126,4 +136,13 @@ fn settings_choose_the_sources() {
     assert_eq!(own.rpc_label(), "your ROBINHOOD_RPC_URL");
     let junk = Sources::from_settings(Some("not a url"), Some("  "));
     assert_eq!(junk.rpc_label(), "public");
+}
+
+#[tokio::test]
+async fn wallet_tools_explain_when_there_is_no_wrangl_to_ask() {
+    let err = WalletLink::default()
+        .run(crate::wallet::tools::WalletTool::Address, json!({}))
+        .await
+        .unwrap_err();
+    assert!(err.contains("only available inside Wrangl"), "{err}");
 }

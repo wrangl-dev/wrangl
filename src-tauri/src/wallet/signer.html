@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wrangl wallet</title>
+<style>
+  :root {
+    --bg: #0f0f10; --panel: #18181a; --line: #2a2a2e; --text: #ececee; --muted: #9a9aa2;
+    --accent: #f2f2f2; --accent-text: #0f0f10; --danger: #ff6b6b; --warn-bg: #2a1718; --ok: #6fdc8c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 15px; margin: 32px 0 12px; color: var(--muted); font-weight: 500; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  button {
+    font: inherit; font-size: 15px; min-height: 44px; padding: 0 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  dl { display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; margin: 12px 0; }
+  dt { color: var(--muted); font-size: 14px; }
+  dd { margin: 0; }
+  .warn { background: var(--warn-bg); border-left: 3px solid var(--danger); padding: 8px 12px; margin: 8px 0; font-size: 14px; }
+  .error { color: var(--danger); }
+  .ok { color: var(--ok); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  @media (prefers-reduced-motion: no-preference) { button { transition: opacity 150ms; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Wrangl wallet</h1>
+  <p class="muted">Your keys stay in your wallet. Wrangl only learns your address, and nothing is sent until you confirm it in your wallet.</p>
+
+  <section aria-labelledby="account-title">
+    <h2 id="account-title">Account</h2>
+    <div class="card" id="account" aria-live="polite">Loading…</div>
+  </section>
+
+  <section aria-labelledby="requests-title">
+    <h2 id="requests-title">Waiting for your signature</h2>
+    <div id="requests" aria-live="polite"><p class="muted">Nothing to sign.</p></div>
+  </section>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const token = params.get('t') || '';
+  history.replaceState(null, '', '/');
+
+  const eth = window.ethereum;
+  let snapshot = null;
+  let walletAccount = null;
+  let busy = new Set();
+  let message = '';
+
+  const el = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const short = (a) => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '';
+
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'x-wrangl-token': token, 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function ensureChain() {
+    const want = snapshot.chainIdHex;
+    const current = await eth.request({ method: 'eth_chainId' });
+    if (current && current.toLowerCase() === want) return;
+    try {
+      await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] });
+    } catch (err) {
+      if (err && (err.code === 4902 || err.code === -32603)) {
+        await eth.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: want,
+            chainName: 'Robinhood Chain',
+            nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+            rpcUrls: [snapshot.rpcUrl]
+          }]
+        });
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  async function connect() {
+    message = '';
+    try {
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      if (!accounts || !accounts[0]) throw new Error('The wallet shared no account.');
+      await ensureChain();
+      walletAccount = accounts[0].toLowerCase();
+      snapshot = await api('/api/connect', { address: walletAccount });
+    } catch (err) {
+      message = err && err.code === 4001 ? 'Connection cancelled in the wallet.' : `Could not connect: ${err.message || err}`;
+    }
+    render();
+  }
+
+  async function disconnect() {
+    snapshot = await api('/api/disconnect', {});
+    render();
+  }
+
+  async function sign(request) {
+    busy.add(request.id); render();
+    try {
+      await ensureChain();
+      const hash = await eth.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: request.from, to: request.to, value: request.valueWeiHex,
+          data: request.data === '0x' ? undefined : request.data
+        }]
+      });
+      await api(`/api/requests/${encodeURIComponent(request.id)}`, { result: 'sent', hash });
+      message = `Sent. Transaction ${short(hash)}.`;
+    } catch (err) {
+      const rejected = err && err.code === 4001;
+      await api(`/api/requests/${encodeURIComponent(request.id)}`, rejected
+        ? { result: 'rejected' }
+        : { result: 'failed', error: String(err && err.message || err) }).catch(() => {});
+      message = rejected ? 'Rejected in the wallet.' : `The wallet reported an error: ${err.message || err}`;
+    } finally {
+      busy.delete(request.id);
+      await refresh();
+    }
+  }
+
+  async function reject(request) {
+    busy.add(request.id); render();
+    await api(`/api/requests/${encodeURIComponent(request.id)}`, { result: 'rejected' }).catch(() => {});
+    busy.delete(request.id);
+    message = 'Rejected.';
+    await refresh();
+  }
+
+  function renderAccount() {
+    const box = el('account');
+    if (!eth) {
+      box.innerHTML = '<p>No wallet found in this browser.</p><p class="muted">Install MetaMask or Rabby in this browser, then reload this page.</p>';
+      return;
+    }
+    const addr = snapshot && snapshot.address;
+    const mismatch = addr && walletAccount && walletAccount !== addr;
+    box.innerHTML = addr
+      ? `<p>Connected <span class="mono">${esc(addr)}</span></p>
+         <p class="muted">Robinhood Chain (chain id ${snapshot.chainId}). Watch-only: Wrangl holds no key.</p>
+         ${mismatch ? `<div class="warn">Your wallet is on another account (${esc(short(walletAccount))}). Switch to ${esc(short(addr))} in the wallet before signing.</div>` : ''}
+         <div class="row"><button id="reconnect">Use current wallet account</button><button id="disconnect">Disconnect</button></div>`
+      : `<p>No wallet connected.</p><div class="row"><button class="primary" id="connect">Connect wallet</button></div>`;
+    if (message) box.insertAdjacentHTML('beforeend', `<p class="muted" style="margin-top:12px">${esc(message)}</p>`);
+    const on = (id, fn) => { const b = el(id); if (b) b.onclick = fn; };
+    on('connect', connect); on('reconnect', connect); on('disconnect', disconnect);
+  }
+
+  function renderRequests() {
+    const box = el('requests');
+    const requests = (snapshot && snapshot.requests) || [];
+    if (!requests.length) { box.innerHTML = '<p class="muted">Nothing to sign.</p>'; return; }
+    const mismatch = snapshot.address && walletAccount && walletAccount !== snapshot.address;
+    box.innerHTML = '';
+    for (const r of requests) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <p><strong>${esc(r.description)}</strong></p>
+        ${r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('')}
+        <dl>
+          <dt>From</dt><dd class="mono">${esc(r.from)}</dd>
+          <dt>To</dt><dd class="mono">${esc(r.to)}</dd>
+          <dt>Send</dt><dd>${esc(r.valueEth)} ETH</dd>
+          <dt>Gas</dt><dd>${r.gasEstimate ? esc(r.gasEstimate) + ' units (simulated)' : 'not simulated'}</dd>
+        </dl>
+        ${r.data !== '0x' ? `<details><summary>Contract data (${(r.data.length - 2) / 2} bytes)</summary><p class="mono">${esc(r.data)}</p></details>` : ''}
+        <p class="muted" style="margin-top:12px">Your wallet shows the real transaction next. Check it there before you confirm.</p>
+        <div class="row"></div>`;
+      const row = card.querySelector('.row');
+      const signBtn = document.createElement('button');
+      signBtn.className = 'primary';
+      signBtn.textContent = busy.has(r.id) ? 'Waiting for the wallet…' : 'Review in wallet';
+      signBtn.disabled = busy.has(r.id) || !eth || !!mismatch;
+      signBtn.onclick = () => sign(r);
+      const rejectBtn = document.createElement('button');
+      rejectBtn.textContent = 'Reject';
+      rejectBtn.disabled = busy.has(r.id);
+      rejectBtn.onclick = () => reject(r);
+      row.append(signBtn, rejectBtn);
+      box.append(card);
+    }
+  }
+
+  function render() { renderAccount(); renderRequests(); }
+
+  async function refresh() {
+    try {
+      snapshot = await api('/api/state');
+      if (eth && !walletAccount) {
+        const accounts = await eth.request({ method: 'eth_accounts' }).catch(() => []);
+        walletAccount = accounts && accounts[0] ? accounts[0].toLowerCase() : null;
+      }
+    } catch (err) {
+      el('account').innerHTML = `<p class="error">Wrangl is not answering. Open Wallet in Wrangl again for a fresh link.</p>`;
+      el('requests').innerHTML = '';
+      return;
+    }
+    render();
+  }
+
+  if (eth && eth.on) {
+    eth.on('accountsChanged', (accounts) => {
+      walletAccount = accounts && accounts[0] ? accounts[0].toLowerCase() : null;
+      render();
+    });
+  }
+  refresh();
+  setInterval(() => { if (!busy.size) refresh(); }, 1500);
+})();
+</script>
+</body>
+</html>

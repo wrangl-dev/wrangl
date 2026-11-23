@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { TerminalTabs } from './components/TerminalTabs';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
 
 export function App() {
@@ -22,9 +23,7 @@ export function App() {
       </aside>
 
       <main className="workspace">
-        <section className="panel" aria-label="Terminal">
-          <p className="muted">Terminal</p>
-        </section>
+        <TerminalTabs />
       </main>
 
       <footer className="statusbar">

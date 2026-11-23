@@ -10,6 +10,8 @@ export default defineConfig({
     strictPort: true,
     // Local-only folders (old app, launch material) sit next to the repo; keep Vite out of them.
     watch: { ignored: ['**/src-tauri/**', '**/legacy/**', '**/studio-lokal/**', '**/backup/**'] },
+    // Browser dev mode: commands go to the wrangl-web server (`bun run web:server`).
+    proxy: { '/ws': { target: 'ws://127.0.0.1:4220', ws: true } },
   },
   optimizeDeps: { entries: ['index.html'] },
   envPrefix: ['VITE_', 'TAURI_ENV_'],

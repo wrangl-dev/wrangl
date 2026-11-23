@@ -60,10 +60,96 @@ body {
   min-width: 0;
 }
 
-.panel {
+.terminals {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  padding: 12px;
-  font-family: var(--mono);
+  min-width: 0;
+  min-height: 0;
+}
+
+.tabbar {
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.tab[data-active="true"] {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tabbar button {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab-label {
+  padding: 0 8px 0 12px;
+  height: 100%;
+  white-space: nowrap;
+}
+
+.tab-close {
+  padding: 0 8px;
+  height: 100%;
+  opacity: 0.6;
+}
+
+.tab-close:hover,
+.tab-add:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.tab-add {
+  padding: 0 12px;
+  color: var(--muted);
+}
+
+.terminal-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-view {
+  position: absolute;
+  inset: 0;
+  padding: 6px 0 0 8px;
+}
+
+.terminal-view[hidden] {
+  display: none;
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+.empty button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
 }
 
 .statusbar {

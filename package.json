@@ -12,6 +12,7 @@
     "build": "tauri build",
     "web:dev": "vite",
     "web:build": "tsc -b && vite build",
+    "web:server": "cargo run --manifest-path src-tauri/Cargo.toml --bin wrangl-web",
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -20,6 +21,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

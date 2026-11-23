@@ -258,6 +258,27 @@ pub fn terminal_login(
     Ok(login)
 }
 
+/// Wrangl's own MCP server (the chain tools), offered to every session: this executable with
+/// `--mcp`. Empty when the executable cannot be found, so a chat still works without the tools.
+fn wrangl_tools() -> Vec<McpServer> {
+    let Ok(exe) = std::env::current_exe() else {
+        return vec![];
+    };
+    // The user's own RPC and market key (Settings, else the environment) reach the tools;
+    // nothing else does.
+    let env = crate::settings::SettingsStore::default()
+        .load()
+        .tool_env()
+        .into_iter()
+        .map(|(name, value)| EnvVariable::new(name, value))
+        .collect();
+    vec![McpServer::Stdio(
+        McpServerStdio::new(crate::chain::mcp::SERVER_NAME, exe)
+            .args(vec![crate::chain::mcp::MCP_FLAG.to_string()])
+            .env(env),
+    )]
+}
+
 fn is_auth_required(error: &agent_client_protocol::Error) -> bool {
     error.code == ErrorCode::AuthRequired
 }
@@ -329,7 +350,7 @@ async fn run(
             // Open the session; when the agent wants a sign-in, wait for the user's choice.
             let session_id: SessionId = loop {
                 match cx
-                    .send_request(NewSessionRequest::new(cwd.clone()))
+                    .send_request(NewSessionRequest::new(cwd.clone()).mcp_servers(wrangl_tools()))
                     .block_task()
                     .await
                 {

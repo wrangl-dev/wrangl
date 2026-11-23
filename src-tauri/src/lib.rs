@@ -3,12 +3,16 @@
 pub mod agents;
 pub mod app_info;
 pub mod bridge;
+pub mod chain;
 pub mod paths;
 pub mod pty;
+pub mod settings;
 pub mod web;
 
 #[cfg(test)]
 mod app_info_tests;
+#[cfg(test)]
+mod settings_tests;
 
 use tauri::Manager;
 

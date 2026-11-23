@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChatHome } from './components/ChatHome';
 import { Icon } from './components/Icon';
+import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
 import { UpdateButton } from './components/UpdateButton';
@@ -44,6 +45,7 @@ export function App({ store = chatStore, pickFolder }: Props) {
   // Projects whose terminal panel exists; their shells keep running when another is shown.
   const [terminalProjects, setTerminalProjects] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     loadAppInfo()
@@ -128,6 +130,8 @@ export function App({ store = chatStore, pickFolder }: Props) {
         pickFolder={picker}
         onAdd={add}
         onRemove={remove}
+        settingsOpen={settingsOpen}
+        onOpenSettings={() => setSettingsOpen((o) => !o)}
       />
 
       <main className="workspace">
@@ -139,6 +143,8 @@ export function App({ store = chatStore, pickFolder }: Props) {
           onChatCreated={(id) => active && selectChat(active.id, id)}
           store={store}
         />
+        {/* Over the chat; chats and their agents keep running underneath. */}
+        {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
         {projects
           .filter((p) => terminalProjects.includes(p.id))
           .map((p) => (

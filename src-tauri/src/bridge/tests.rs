@@ -11,6 +11,7 @@ fn offline() -> Backend {
         pty: crate::pty::PtyManager::default(),
         agents: RegistryStore::new(None, "http://127.0.0.1:9/registry.json"),
         chats: crate::agents::session::AgentSessions::default(),
+        settings: crate::settings::SettingsStore::new(None),
     }
 }
 
@@ -76,9 +77,13 @@ async fn kill_reports_its_effect_even_for_unknown_ids() {
 async fn every_listed_command_is_dispatched() {
     let backend = offline();
     for cmd in COMMANDS {
-        let err = dispatch(&backend, cmd, json!({}), &quiet_sink())
-            .await
-            .err();
+        // A bad URL keeps chain_test_rpc off the network.
+        let input = if *cmd == "chain_test_rpc" {
+            json!({ "rpcUrl": "not a url" })
+        } else {
+            json!({})
+        };
+        let err = dispatch(&backend, cmd, input, &quiet_sink()).await.err();
         assert!(
             !err.unwrap_or_default().contains("unknown command"),
             "{cmd} is listed but not dispatched"

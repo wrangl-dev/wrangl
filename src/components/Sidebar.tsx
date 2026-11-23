@@ -18,6 +18,8 @@ interface Props {
   pickFolder?: () => Promise<string | null>;
   onAdd: (path: string) => void;
   onRemove: (id: string) => void;
+  settingsOpen?: boolean;
+  onOpenSettings?: () => void;
 }
 
 export function Sidebar({
@@ -32,6 +34,8 @@ export function Sidebar({
   pickFolder,
   onAdd,
   onRemove,
+  settingsOpen = false,
+  onOpenSettings,
 }: Props) {
   const [typing, setTyping] = useState(!pickFolder && projects.length === 0);
   const [path, setPath] = useState('');
@@ -185,6 +189,20 @@ export function Sidebar({
           );
         })}
       </ul>
+
+      {onOpenSettings && (
+        <footer className="sidebar-foot">
+          <button
+            type="button"
+            className="sidebar-link"
+            aria-pressed={settingsOpen}
+            onClick={onOpenSettings}
+          >
+            <Icon name="settings" size={14} />
+            Settings
+          </button>
+        </footer>
+      )}
     </aside>
   );
 }

@@ -21,8 +21,3 @@ pub fn current() -> AppInfo {
         chain_id: CHAIN_ID,
     }
 }
-
-#[tauri::command]
-pub fn app_info() -> AppInfo {
-    current()
-}

@@ -84,3 +84,30 @@ describe('WebClient', () => {
     await expect(pending).rejects.toThrow('could not reach');
   });
 });
+
+describe('tauriBridgeArgs', () => {
+  // Tauri channels register a callback with the app; a counter is enough here.
+  beforeEach(() => {
+    let n = 0;
+    vi.stubGlobal('__TAURI_INTERNALS__', { transformCallback: () => ++n });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('moves a Tauri channel out of the arguments and leaves its id behind', async () => {
+    const { Channel } = await import('@tauri-apps/api/core');
+    const { tauriBridgeArgs } = await import('./ipc');
+    const ch = new Channel<unknown>();
+    const out = tauriBridgeArgs('pty_spawn', { cols: 80, onEvent: ch });
+    expect(out.cmd).toBe('pty_spawn');
+    expect(out.events).toBe(ch);
+    expect(out.args).toEqual({ cols: 80, onEvent: ch.toJSON() });
+    expect(String(out.args.onEvent)).toMatch(/^__CHANNEL__:\d+$/);
+  });
+
+  it('always passes some channel, as the Tauri command requires one', async () => {
+    const { tauriBridgeArgs } = await import('./ipc');
+    const out = tauriBridgeArgs('app_info', {});
+    expect(out.events).toBeDefined();
+    expect(out.args).toEqual({});
+  });
+});

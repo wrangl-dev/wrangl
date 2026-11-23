@@ -1,7 +1,9 @@
 //! Wrangl desktop runtime.
 
+pub mod agents;
 pub mod app_info;
 pub mod bridge;
+pub mod paths;
 pub mod pty;
 pub mod web;
 
@@ -9,6 +11,25 @@ pub mod web;
 mod app_info_tests;
 
 use tauri::Manager;
+
+/// Every UI call in the desktop app: the same command table the browser dev mode uses.
+/// `events` carries pushes for commands that stream (terminals, chats); other calls ignore it.
+#[tauri::command]
+async fn bridge(
+    backend: tauri::State<'_, bridge::Backend>,
+    cmd: String,
+    args: serde_json::Value,
+    events: tauri::ipc::Channel<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let sink: bridge::EventSink = std::sync::Arc::new(move |_, payload| {
+        if let Err(e) = events.send(payload) {
+            log::warn!("[bridge] could not deliver an event: {e}");
+        }
+    });
+    bridge::dispatch(&backend, &cmd, args, &sink)
+        .await
+        .map(|(answer, _)| answer)
+}
 
 /// Start the desktop app.
 ///
@@ -21,14 +42,8 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .manage(pty::PtyManager::default())
-        .invoke_handler(tauri::generate_handler![
-            app_info::app_info,
-            pty::commands::pty_spawn,
-            pty::commands::pty_write,
-            pty::commands::pty_resize,
-            pty::commands::pty_kill,
-        ])
+        .manage(bridge::Backend::default())
+        .invoke_handler(tauri::generate_handler![bridge])
         .setup(|_app| {
             log::info!("[app] started v{}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -37,7 +52,9 @@ pub fn run() {
         .expect("error while building Wrangl")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                app.state::<pty::PtyManager>().kill_all();
+                let backend = app.state::<bridge::Backend>();
+                backend.pty.kill_all();
+                backend.chats.stop_all();
             }
         });
 }

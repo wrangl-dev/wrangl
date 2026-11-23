@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatItem, ChatState } from '../lib/chat';
 import type { PtyEvent, SpawnOptions } from '../lib/pty';
+import { Markdown } from './Markdown';
 import { TerminalView } from './TerminalView';
 
 interface Props {
@@ -28,7 +29,7 @@ function Item({ item, agentName }: { item: ChatItem; agentName: string }) {
       return (
         <div className="msg msg-agent">
           <span className="msg-who">{agentName}</span>
-          <div className="msg-text">{item.text}</div>
+          <Markdown text={item.text} />
         </div>
       );
     case 'thought':

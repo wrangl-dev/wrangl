@@ -48,6 +48,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        // Links in chat answers open in the default browser, not in the app window.
+        .plugin(tauri_plugin_opener::init())
         // Updates come from GitHub releases, signed with the Wrangl release key.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())

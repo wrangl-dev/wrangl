@@ -1,7 +1,8 @@
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from 'react';
 import { type AgentSummary, listAgents, loadSelectedAgent, saveSelectedAgent } from '../lib/agents';
+import { initialChat } from '../lib/chat';
+import { type ChatStore, chatStore, useChatStore } from '../lib/chat-store';
 import type { Project } from '../lib/projects';
-import { useChat } from '../lib/use-chat';
 import { AgentPicker } from './AgentPicker';
 import { ChatThread } from './ChatThread';
 import { Icon } from './Icon';
@@ -23,10 +24,16 @@ const PHASE_TEXT: Record<string, string> = {
 
 interface Props {
   project: Project | null;
+  /** The open chat, or null for a new one in `project`. */
+  chatId: string | null;
+  /** A new chat got its first message. */
+  onChatCreated: (chatId: string) => void;
+  store?: ChatStore;
 }
 
-/** The chat: an empty start screen, then the conversation with the chosen agent. */
-export function ChatHome({ project }: Props) {
+/** The chat area: a start screen for a new chat, or the conversation of an existing one. */
+export function ChatHome({ project, chatId, onChatCreated, store = chatStore }: Props) {
+  useChatStore(store);
   const [draft, setDraft] = useState('');
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,9 +51,11 @@ export function ChatHome({ project }: Props) {
 
   useEffect(() => load(false), [load]);
 
-  const agent = agents.find((a) => a.id === agentId) ?? null;
-  const chat = useChat(agent?.id ?? null, project?.path ?? null);
-  const { state } = chat;
+  const chat = store.get(chatId);
+  const state = chat?.state ?? initialChat;
+  // An existing chat keeps the agent it started with; a new chat uses the picker.
+  const pickedAgent = agents.find((a) => a.id === (chat?.meta.agentId ?? agentId)) ?? null;
+  const agentName = chat?.meta.agentName ?? pickedAgent?.name ?? 'Agent';
   const started = state.items.length > 0;
 
   const choose = (id: string) => {
@@ -55,15 +64,21 @@ export function ChatHome({ project }: Props) {
   };
 
   const canSend = Boolean(
-    agent && project && draft.trim() && !state.busy && state.phase !== 'auth',
+    (chat || pickedAgent) && project && draft.trim() && !state.busy && state.phase !== 'auth',
   );
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
-    if (!canSend) return;
+    if (!canSend || !project) return;
     const text = draft.trim();
     setDraft('');
-    chat.send(text);
+    let id = chatId;
+    if (!id || !chat) {
+      if (!pickedAgent) return;
+      id = store.create(project.id, pickedAgent.id, pickedAgent.name);
+      onChatCreated(id);
+    }
+    store.send(id, text, project.path);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -75,17 +90,14 @@ export function ChatHome({ project }: Props) {
 
   let hint = '';
   if (!project) hint = 'Add a project first';
-  else if (!agent) hint = '';
-  else hint = PHASE_TEXT[state.phase] ?? '';
+  else if (chat || pickedAgent) hint = PHASE_TEXT[state.phase] ?? '';
 
   return (
     <section className="chat-home" aria-label="Chat" data-started={started}>
       {started ? (
-        <header className="chat-header">
-          <span>{agent?.name ?? 'Chat'}</span>
-          <button type="button" className="chat-new" onClick={chat.reset}>
-            New chat
-          </button>
+        <header className="chat-header" aria-label="Chat title">
+          <span>{chat?.meta.title ?? agentName}</span>
+          <span className="muted">{agentName}</span>
         </header>
       ) : (
         <>
@@ -94,13 +106,13 @@ export function ChatHome({ project }: Props) {
         </>
       )}
 
-      {started && (
+      {started && chat && (
         <ChatThread
           state={state}
-          agentName={agent?.name ?? 'Agent'}
-          onAnswer={chat.answer}
-          onSignIn={chat.signIn}
-          loginSpawner={chat.loginSpawner}
+          agentName={agentName}
+          onAnswer={(requestId, optionId) => store.answer(chat.meta.id, requestId, optionId)}
+          onSignIn={(methodId) => store.signIn(chat.meta.id, methodId)}
+          loginSpawner={(methodId) => store.loginSpawner(chat.meta.id, methodId)}
         />
       )}
 
@@ -114,21 +126,25 @@ export function ChatHome({ project }: Props) {
           rows={started ? 2 : 3}
         />
         <div className="composer-bar">
-          <AgentPicker
-            agents={agents}
-            loading={loading}
-            error={error}
-            selectedId={agentId}
-            onSelect={choose}
-            onRetry={() => load(true)}
-          />
+          {chat ? (
+            <span className="agent-fixed">{agentName}</span>
+          ) : (
+            <AgentPicker
+              agents={agents}
+              loading={loading}
+              error={error}
+              selectedId={agentId}
+              onSelect={choose}
+              onRetry={() => load(true)}
+            />
+          )}
           <span className="composer-hint">{hint}</span>
-          {state.busy ? (
+          {state.busy && chat ? (
             <button
               type="button"
               className="send-button stop"
               aria-label="Stop"
-              onClick={chat.cancel}
+              onClick={() => store.cancel(chat.meta.id)}
             >
               <span className="stop-square" />
             </button>

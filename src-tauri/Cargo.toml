@@ -24,7 +24,7 @@ portable-pty = "0.9"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util", "io-std"] }
 tower-http = { version = "0.6", features = ["fs"] }
 env_logger = "0.11"
 futures-util = "0.3"
@@ -34,6 +34,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 tar = "0.4"
 flate2 = "1"
+schemars = "1"
 
 [profile.release]
 codegen-units = 1
@@ -41,5 +42,6 @@ lto = true
 strip = true
 
 [dev-dependencies]
+sha3 = "0.11"
 tempfile = "3"
 tokio-tungstenite = "0.28"

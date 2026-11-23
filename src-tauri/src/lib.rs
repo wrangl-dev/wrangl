@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod app_info;
 pub mod bridge;
+pub mod chain;
 pub mod paths;
 pub mod pty;
 pub mod web;

@@ -8,6 +8,14 @@
 use std::path::PathBuf;
 
 fn main() {
+    // Agents start this same executable as their Robinhood Chain tool server.
+    if std::env::args().any(|a| a == wrangl_lib::chain::mcp::MCP_FLAG) {
+        if let Err(e) = wrangl_lib::chain::mcp::run_stdio() {
+            eprintln!("wrangl-web --mcp: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let mut port = wrangl_lib::web::DEFAULT_PORT;

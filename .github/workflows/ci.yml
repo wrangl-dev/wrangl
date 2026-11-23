@@ -24,6 +24,25 @@ jobs:
       - run: bun run test
       - run: bun run web:build
 
+  sites:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Landing
+        working-directory: landing
+        run: |
+          bun install --frozen-lockfile
+          bun run test
+          bun run build
+          bun run verify:prerender
+      - name: Docs
+        working-directory: website-docs
+        run: |
+          bun install --frozen-lockfile
+          bun test
+          bun run build
+
   rust:
     runs-on: ubuntu-latest
     defaults:

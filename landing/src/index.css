@@ -1,0 +1,5 @@
+/* Prototype styles, ported from landing/prototype. Order matters: shared first, then per-page. */
+@import "./styles/site.css";
+@import "./styles/page-features.css";
+@import "./styles/page-install.css";
+@import "./styles/page-legal.css";

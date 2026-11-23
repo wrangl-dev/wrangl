@@ -1,0 +1,15 @@
+{
+  "name": "wrangl-docs",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.11",
+  "scripts": {
+    "build": "bun build.ts",
+    "test": "bun test",
+    "preview": "bunx serve dist -l 4211",
+    "deploy": "bunx wrangler pages deploy dist --project-name=wrangl-docs"
+  },
+  "dependencies": {
+    "marked": "^18.0.0"
+  }
+}

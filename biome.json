@@ -11,10 +11,24 @@
       "!backup",
       "!catatan-lokal",
       "!landing-prototype",
-      "!studio-lokal"
+      "!studio-lokal",
+      "!landing/dist",
+      "!website-docs/dist"
     ]
   },
-  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "javascript": { "formatter": { "quoteStyle": "single" } },
-  "linter": { "rules": { "preset": "none" } }
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single"
+    }
+  },
+  "linter": {
+    "rules": {
+      "preset": "none"
+    }
+  }
 }

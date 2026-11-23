@@ -1,4 +1,4 @@
-import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import { backendKind, call, createChannel } from './ipc';
 
 /** What a terminal sends back, mirroring `PtyEvent` in `src-tauri/src/pty/mod.rs`. */
 export type PtyEvent = { kind: 'data'; data: string } | { kind: 'exit'; code: number | null };
@@ -9,23 +9,26 @@ export interface SpawnOptions {
   cwd?: string;
 }
 
-/** Terminals run only in the desktop app; a plain browser has no shell to start. */
-export const ptyAvailable = (): boolean => isTauri();
+/** Terminals need a backend: the desktop app or the wrangl-web dev server. */
+export const ptyAvailable = async (): Promise<boolean> => (await backendKind()) !== 'none';
 
 /** Start a shell and stream its output to `onEvent`. Resolves to the terminal id. */
-export function spawnPty(
+export async function spawnPty(
   options: SpawnOptions,
   onEvent: (event: PtyEvent) => void,
 ): Promise<string> {
-  const channel = new Channel<PtyEvent>();
-  channel.onmessage = onEvent;
-  return invoke<string>('pty_spawn', { ...options, cwd: options.cwd ?? null, onEvent: channel });
+  const onEventChannel = await createChannel<PtyEvent>(onEvent);
+  return call<string>('pty_spawn', {
+    ...options,
+    cwd: options.cwd ?? null,
+    onEvent: onEventChannel,
+  });
 }
 
 export const writePty = (id: string, data: string): Promise<void> =>
-  invoke('pty_write', { id, data });
+  call('pty_write', { id, data });
 
 export const resizePty = (id: string, cols: number, rows: number): Promise<void> =>
-  invoke('pty_resize', { id, cols, rows });
+  call('pty_resize', { id, cols, rows });
 
-export const killPty = (id: string): Promise<void> => invoke('pty_kill', { id });
+export const killPty = (id: string): Promise<void> => call('pty_kill', { id });

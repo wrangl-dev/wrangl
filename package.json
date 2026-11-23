@@ -12,6 +12,7 @@
     "build": "tauri build",
     "web:dev": "vite",
     "web:build": "tsc -b && vite build",
+    "web:server": "cargo run --manifest-path src-tauri/Cargo.toml --bin wrangl-web",
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

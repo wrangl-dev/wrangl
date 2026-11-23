@@ -45,11 +45,6 @@ export function TerminalView({ active, onExit }: Props) {
     termRef.current = term;
     fitRef.current = fit;
 
-    if (!ptyAvailable()) {
-      term.write('Terminals run in the Wrangl desktop app.\r\n');
-      return () => term.dispose();
-    }
-
     let id: string | null = null;
     let disposed = false;
     const input = term.onData((data) => {
@@ -59,21 +54,29 @@ export function TerminalView({ active, onExit }: Props) {
       if (id) resizePty(id, cols, rows).catch(() => {});
     });
 
-    spawnPty({ cols: term.cols, rows: term.rows }, (event) => {
-      if (event.kind === 'data') term.write(event.data);
-      else {
-        term.write(
-          `\r\n[process exited${event.code === null ? '' : ` with code ${event.code}`}]\r\n`,
-        );
-        id = null;
-        onExitRef.current(event.code);
+    const start = async () => {
+      if (!(await ptyAvailable())) {
+        term.write('Terminals need the Wrangl desktop app or the wrangl-web dev server.\r\n');
+        return;
       }
-    })
-      .then((newId) => {
-        if (disposed) killPty(newId).catch(() => {});
-        else id = newId;
-      })
-      .catch((e: unknown) => term.write(`\r\nCould not start a shell: ${String(e)}\r\n`));
+      const newId = await spawnPty({ cols: term.cols, rows: term.rows }, (event) => {
+        // A view that was unmounted killed its own shell; that exit is not news for the tab.
+        if (disposed) return;
+        if (event.kind === 'data') term.write(event.data);
+        else {
+          term.write(
+            `\r\n[process exited${event.code === null ? '' : ` with code ${event.code}`}]\r\n`,
+          );
+          id = null;
+          onExitRef.current(event.code);
+        }
+      });
+      if (disposed) killPty(newId).catch(() => {});
+      else id = newId;
+    };
+    start().catch((e: unknown) => {
+      if (!disposed) term.write(`\r\nCould not start a shell: ${String(e)}\r\n`);
+    });
 
     const observer = new ResizeObserver(() => {
       if (el.offsetParent !== null) fit.fit();

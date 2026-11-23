@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from 'react';
 import { type AgentSummary, listAgents, loadSelectedAgent, saveSelectedAgent } from '../lib/agents';
 import type { Project } from '../lib/projects';
+import { useChat } from '../lib/use-chat';
 import { AgentPicker } from './AgentPicker';
+import { ChatThread } from './ChatThread';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
 
@@ -13,11 +15,17 @@ export const SUGGESTIONS = [
   'Explain this project',
 ];
 
+const PHASE_TEXT: Record<string, string> = {
+  installing: 'Installing the agent…',
+  starting: 'Starting the agent…',
+  auth: 'Sign in to continue',
+};
+
 interface Props {
   project: Project | null;
 }
 
-/** The empty chat: what an agent should do, in which project. Sending arrives with ACP chat. */
+/** The chat: an empty start screen, then the conversation with the chosen agent. */
 export function ChatHome({ project }: Props) {
   const [draft, setDraft] = useState('');
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -36,24 +44,74 @@ export function ChatHome({ project }: Props) {
 
   useEffect(() => load(false), [load]);
 
+  const agent = agents.find((a) => a.id === agentId) ?? null;
+  const chat = useChat(agent?.id ?? null, project?.path ?? null);
+  const { state } = chat;
+  const started = state.items.length > 0;
+
   const choose = (id: string) => {
     setAgentId(id);
     saveSelectedAgent(id);
   };
-  const agent = agents.find((a) => a.id === agentId) ?? null;
+
+  const canSend = Boolean(
+    agent && project && draft.trim() && !state.busy && state.phase !== 'auth',
+  );
+
+  const submit = (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!canSend) return;
+    const text = draft.trim();
+    setDraft('');
+    chat.send(text);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  let hint = '';
+  if (!project) hint = 'Add a project first';
+  else if (!agent) hint = '';
+  else hint = PHASE_TEXT[state.phase] ?? '';
 
   return (
-    <section className="chat-home" aria-label="Chat">
-      <Logo height={30} className="chat-mark" />
-      <h1>{project ? `What should we do in ${project.name}?` : 'Add a project to start'}</h1>
+    <section className="chat-home" aria-label="Chat" data-started={started}>
+      {started ? (
+        <header className="chat-header">
+          <span>{agent?.name ?? 'Chat'}</span>
+          <button type="button" className="chat-new" onClick={chat.reset}>
+            New chat
+          </button>
+        </header>
+      ) : (
+        <>
+          <Logo height={30} className="chat-mark" />
+          <h1>{project ? `What should we do in ${project.name}?` : 'Add a project to start'}</h1>
+        </>
+      )}
 
-      <form className="composer" onSubmit={(e) => e.preventDefault()}>
+      {started && (
+        <ChatThread
+          state={state}
+          agentName={agent?.name ?? 'Agent'}
+          onAnswer={chat.answer}
+          onSignIn={chat.signIn}
+          loginSpawner={chat.loginSpawner}
+        />
+      )}
+
+      <form className="composer" onSubmit={submit}>
         <textarea
           aria-label="Message"
           placeholder="Ask anything about your code or Robinhood Chain…"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          rows={3}
+          onKeyDown={onKeyDown}
+          rows={started ? 2 : 3}
         />
         <div className="composer-bar">
           <AgentPicker
@@ -64,35 +122,40 @@ export function ChatHome({ project }: Props) {
             onSelect={choose}
             onRetry={() => load(true)}
           />
-          <span className="composer-hint">
-            {agent ? `Chat with ${agent.name} arrives in the next update` : ''}
-          </span>
-          <button
-            type="submit"
-            className="send-button"
-            aria-label="Send"
-            disabled
-            title="Agents arrive in the next update"
-          >
-            <Icon name="send" size={14} />
-          </button>
+          <span className="composer-hint">{hint}</span>
+          {state.busy ? (
+            <button
+              type="button"
+              className="send-button stop"
+              aria-label="Stop"
+              onClick={chat.cancel}
+            >
+              <span className="stop-square" />
+            </button>
+          ) : (
+            <button type="submit" className="send-button" aria-label="Send" disabled={!canSend}>
+              <Icon name="send" size={14} />
+            </button>
+          )}
         </div>
       </form>
 
-      {project && (
+      {!started && project && (
         <p className="composer-context">
           <Icon name="folder" size={13} />
           <span>{project.path}</span>
         </p>
       )}
 
-      <div className="suggestions">
-        {SUGGESTIONS.map((s) => (
-          <button key={s} type="button" onClick={() => setDraft(s)}>
-            {s}
-          </button>
-        ))}
-      </div>
+      {!started && (
+        <div className="suggestions">
+          {SUGGESTIONS.map((s) => (
+            <button key={s} type="button" onClick={() => setDraft(s)}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

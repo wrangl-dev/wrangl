@@ -128,9 +128,28 @@ export async function createChannel<T>(onmessage: (message: T) => void): Promise
   return client.channel(onmessage);
 }
 
+/**
+ * The desktop app has one Tauri command, `bridge`, in front of the same command table. A channel
+ * among the arguments travels as Tauri's `events` argument; inside `args` it is left as its
+ * `__CHANNEL__:<id>` string, which is what the Rust side expects there.
+ */
+export function tauriBridgeArgs(cmd: string, args: Record<string, unknown>) {
+  let events: Channel<unknown> | null = null;
+  const plain: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (value instanceof Channel) {
+      events = value;
+      plain[key] = value.toJSON();
+    } else {
+      plain[key] = value;
+    }
+  }
+  return { cmd, args: plain, events: events ?? new Channel<unknown>() };
+}
+
 /** Run a Rust command. */
 export async function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (isTauri()) return invoke<T>(cmd, args);
+  if (isTauri()) return invoke<T>('bridge', tauriBridgeArgs(cmd, args));
   const client = await webClient();
   if (!client) throw new Error('no backend: open Wrangl in the desktop app or run wrangl-web');
   return client.call<T>(cmd, args);

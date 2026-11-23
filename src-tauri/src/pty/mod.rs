@@ -1,6 +1,5 @@
 //! Terminal sessions: one pseudo-terminal and shell per tab.
 
-pub mod commands;
 pub mod shell;
 pub mod utf8;
 

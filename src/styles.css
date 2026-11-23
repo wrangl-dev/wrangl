@@ -825,3 +825,136 @@ button:disabled {
   background: var(--bg);
   overflow: hidden;
 }
+
+/* Settings */
+
+.workspace {
+  position: relative;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sidebar-link:hover,
+.sidebar-link[aria-pressed="true"] {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.settings {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  padding: 24px max(24px, calc((100% - 680px) / 2));
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.settings h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.settings h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-card {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.settings-card .muted {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.settings-current {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.settings-row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.settings-row button {
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  font-size: 12px;
+}
+
+.settings-row button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.settings-row button:disabled {
+  opacity: 0.5;
+}
+
+.link-button {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.ok {
+  color: #3ecf8e;
+  font-size: 12px;
+}
+
+.settings .error {
+  font-size: 12px;
+}
+
+.settings-foot {
+  font-size: 11px;
+}

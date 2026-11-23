@@ -264,18 +264,14 @@ fn wrangl_tools() -> Vec<McpServer> {
     let Ok(exe) = std::env::current_exe() else {
         return vec![];
     };
-    // The user's own RPC and market key reach the tools; nothing else from the environment does.
-    let env = [
-        crate::chain::tools::RPC_SECRET,
-        crate::chain::tools::COINGECKO_SECRET,
-    ]
-    .into_iter()
-    .filter_map(|name| {
-        std::env::var(name)
-            .ok()
-            .map(|value| EnvVariable::new(name, value))
-    })
-    .collect();
+    // The user's own RPC and market key (Settings, else the environment) reach the tools;
+    // nothing else does.
+    let env = crate::settings::SettingsStore::default()
+        .load()
+        .tool_env()
+        .into_iter()
+        .map(|(name, value)| EnvVariable::new(name, value))
+        .collect();
     vec![McpServer::Stdio(
         McpServerStdio::new(crate::chain::mcp::SERVER_NAME, exe)
             .args(vec![crate::chain::mcp::MCP_FLAG.to_string()])

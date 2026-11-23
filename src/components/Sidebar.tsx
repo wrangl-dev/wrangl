@@ -9,9 +9,19 @@ interface Props {
   onSelect: (id: string) => void;
   onAdd: (path: string) => void;
   onRemove: (id: string) => void;
+  settingsOpen?: boolean;
+  onOpenSettings?: () => void;
 }
 
-export function Sidebar({ projects, activeId, onSelect, onAdd, onRemove }: Props) {
+export function Sidebar({
+  projects,
+  activeId,
+  onSelect,
+  onAdd,
+  onRemove,
+  settingsOpen = false,
+  onOpenSettings,
+}: Props) {
   const [adding, setAdding] = useState(projects.length === 0);
   const [path, setPath] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +96,20 @@ export function Sidebar({ projects, activeId, onSelect, onAdd, onRemove }: Props
           </li>
         ))}
       </ul>
+
+      {onOpenSettings && (
+        <footer className="sidebar-foot">
+          <button
+            type="button"
+            className="sidebar-link"
+            aria-pressed={settingsOpen}
+            onClick={onOpenSettings}
+          >
+            <Icon name="settings" size={14} />
+            Settings
+          </button>
+        </footer>
+      )}
     </aside>
   );
 }

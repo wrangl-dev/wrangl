@@ -33,6 +33,9 @@ pub const COMMANDS: &[&str] = &[
     "agent_authenticate",
     "agent_stop",
     "agent_login",
+    "settings_get",
+    "settings_set",
+    "chain_test_rpc",
 ];
 
 /// Pushes an event to the client's channel number `channel`.
@@ -44,6 +47,7 @@ pub struct Backend {
     pub pty: PtyManager,
     pub agents: RegistryStore,
     pub chats: AgentSessions,
+    pub settings: crate::settings::SettingsStore,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -126,6 +130,14 @@ struct LoginArgs {
     cols: u16,
     rows: u16,
     on_event: Value,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TestRpcArgs {
+    /// A URL typed but not saved yet; missing tests the saved one (or the public RPC).
+    #[serde(default)]
+    rpc_url: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -262,6 +274,39 @@ pub async fn dispatch(
             backend.chats.stop(&a.session_id);
             effects.stopped_chat = Some(a.session_id);
             Value::Null
+        }
+        "settings_get" => {
+            serde_json::to_value(backend.settings.load().view()).map_err(|e| e.to_string())?
+        }
+        "settings_set" => {
+            let patch: crate::settings::SettingsPatch = args(cmd, input)?;
+            let mut settings = backend.settings.load();
+            settings.apply(patch)?;
+            backend.settings.save(&settings)?;
+            log::info!("[settings] saved; rpc set: {}", settings.view().rpc_url_set);
+            serde_json::to_value(settings.view()).map_err(|e| e.to_string())?
+        }
+        "chain_test_rpc" => {
+            let a: TestRpcArgs = if input.is_null() {
+                TestRpcArgs::default()
+            } else {
+                args(cmd, input)?
+            };
+            let saved = backend.settings.load();
+            let url = match a
+                .rpc_url
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+            {
+                Some(url) => {
+                    crate::settings::validate_rpc_url(&url)?;
+                    Some(url)
+                }
+                None => saved.rpc_url(),
+            };
+            let sources = crate::chain::client::Sources::from_settings(url.as_deref(), None);
+            crate::chain::client::run(&sources, crate::chain::tools::ChainTool::Status, json!({}))
+                .await?
         }
         other => return Err(format!("unknown command {other}")),
     };

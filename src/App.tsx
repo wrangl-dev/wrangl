@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChatHome } from './components/ChatHome';
 import { Icon } from './components/Icon';
+import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
@@ -30,6 +31,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
   const [activeId, setActiveId] = useState<string | null>(() => readActive(projects));
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     loadAppInfo()
@@ -86,10 +88,14 @@ export function App() {
         onSelect={setActiveId}
         onAdd={add}
         onRemove={remove}
+        settingsOpen={settingsOpen}
+        onOpenSettings={() => setSettingsOpen((o) => !o)}
       />
 
       <main className="workspace">
         <ChatHome project={active} />
+        {/* Over the chat, so an open chat and its agent keep running underneath. */}
+        {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
         <TerminalTabs
           visible={terminalOpen}
           cwd={active?.path}

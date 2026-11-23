@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChatHome } from './components/ChatHome';
 import { Icon } from './components/Icon';
 import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
+import { UpdateButton } from './components/UpdateButton';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
+import { type ChatStore, chatStore, useChatStore } from './lib/chat-store';
+import { folderPicker } from './lib/folders';
 import {
   addProject,
   loadProjects,
@@ -25,11 +28,22 @@ function readActive(projects: Project[]): string | null {
   return projects[0]?.id ?? null;
 }
 
-export function App() {
+interface Props {
+  store?: ChatStore;
+  pickFolder?: () => Promise<string | null>;
+}
+
+export function App({ store = chatStore, pickFolder }: Props) {
+  useChatStore(store);
+  const picker = useMemo(() => pickFolder ?? folderPicker(), [pickFolder]);
   const [info, setInfo] = useState<AppInfo>(BROWSER_APP_INFO);
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
   const [activeId, setActiveId] = useState<string | null>(() => readActive(projects));
+  // The open chat per project; missing or null means "new chat".
+  const [openChat, setOpenChat] = useState<Record<string, string | null>>({});
+  // Projects whose terminal panel exists; their shells keep running when another is shown.
+  const [terminalProjects, setTerminalProjects] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -60,6 +74,13 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // A project gets its terminals the first time the panel is shown for it.
+  useEffect(() => {
+    if (terminalOpen && activeId && !terminalProjects.includes(activeId)) {
+      setTerminalProjects((list) => [...list, activeId]);
+    }
+  }, [terminalOpen, activeId, terminalProjects]);
+
   const add = useCallback(
     (path: string) => {
       const next = addProject(projects, path);
@@ -73,19 +94,40 @@ export function App() {
     (id: string) => {
       const rest = removeProject(projects, id);
       setProjects(rest);
+      store.removeProject(id);
+      setTerminalProjects((list) => list.filter((p) => p !== id));
       if (id === activeId) setActiveId(rest[0]?.id ?? null);
     },
-    [projects, activeId],
+    [projects, activeId, store],
   );
 
+  const selectChat = (projectId: string, chatId: string | null) => {
+    setActiveId(projectId);
+    setOpenChat((m) => ({ ...m, [projectId]: chatId }));
+  };
+
+  const removeChat = (chatId: string) => {
+    store.remove(chatId);
+    setOpenChat((m) =>
+      Object.fromEntries(Object.entries(m).map(([p, c]) => [p, c === chatId ? null : c])),
+    );
+  };
+
   const active = projects.find((p) => p.id === activeId) ?? null;
+  const activeChatId = active ? (openChat[active.id] ?? null) : null;
 
   return (
     <div className="shell">
       <Sidebar
         projects={projects}
         activeId={activeId}
+        activeChatId={activeChatId}
+        chatsOf={(id) => store.list(id)}
+        isBusy={(id) => store.busy(id)}
         onSelect={setActiveId}
+        onSelectChat={selectChat}
+        onRemoveChat={removeChat}
+        pickFolder={picker}
         onAdd={add}
         onRemove={remove}
         settingsOpen={settingsOpen}
@@ -93,14 +135,26 @@ export function App() {
       />
 
       <main className="workspace">
-        <ChatHome project={active} />
-        {/* Over the chat, so an open chat and its agent keep running underneath. */}
-        {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
-        <TerminalTabs
-          visible={terminalOpen}
-          cwd={active?.path}
-          onHide={() => setTerminalOpen(false)}
+        <ChatHome
+          // A fresh composer per project and chat.
+          key={`${active?.id ?? 'none'}:${activeChatId ?? 'new'}`}
+          project={active}
+          chatId={activeChatId}
+          onChatCreated={(id) => active && selectChat(active.id, id)}
+          store={store}
         />
+        {/* Over the chat; chats and their agents keep running underneath. */}
+        {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
+        {projects
+          .filter((p) => terminalProjects.includes(p.id))
+          .map((p) => (
+            <TerminalTabs
+              key={p.id}
+              visible={terminalOpen && p.id === activeId}
+              cwd={p.path}
+              onHide={() => setTerminalOpen(false)}
+            />
+          ))}
       </main>
 
       <footer className="statusbar">
@@ -117,6 +171,7 @@ export function App() {
           Robinhood Chain {info.chainId}
         </span>
         <span className="status-item muted">v{info.version}</span>
+        <UpdateButton />
         <button
           type="button"
           className="status-button"

@@ -8,8 +8,13 @@ import { join } from 'node:path';
 
 const DIST = 'dist';
 
-/** Hosts the page talks to: the chain ticker (RPC) and the newest pools (GeckoTerminal). */
-const CONNECT = ['https://rpc.mainnet.chain.robinhood.com', 'https://api.geckoterminal.com'];
+/** Hosts the page talks to: the chain ticker (RPC and its fallbacks) and the newest pools. */
+const CONNECT = [
+  'https://rpc.mainnet.chain.robinhood.com',
+  'https://robinhood-rpc.publicnode.com',
+  'https://robinhood.drpc.org',
+  'https://api.geckoterminal.com',
+];
 
 /** `'sha256-…'` for every inline `<script>` (no `src`) in `html`. */
 export function inlineScriptHashes(html: string): string[] {

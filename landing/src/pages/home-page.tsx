@@ -235,7 +235,7 @@ export function HomePage() {
                 </article>
 
                 <article className="f f-d">
-                  <span className="tag">project secrets</span>
+                  <span className="tag">settings</span>
                   <h4>Your own RPC</h4>
                   <p>
                     Works on the free public RPC out of the box, with keyless fallbacks when it is
@@ -243,11 +243,11 @@ export function HomePage() {
                     it. Agents never see the URL.
                   </p>
                   <div className="cron">
-                    <span className="c"># Settings → Robinhood Chain RPC</span>
+                    <span className="c"># Settings</span>
                     <br />
-                    ROBINHOOD_RPC_URL = https://…
+                    Robinhood Chain RPC = https://… <span className="c">[Test] [Save]</span>
                     <br />
-                    COINGECKO_API_KEY = <span className="c">(optional)</span>
+                    CoinGecko API key = <span className="c">(optional)</span>
                   </div>
                 </article>
               </div>

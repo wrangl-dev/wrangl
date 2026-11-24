@@ -13,6 +13,7 @@
       "!landing-prototype",
       "!studio-lokal",
       "!landing/dist",
+      "!**/.wrangler",
       "!website-docs/dist"
     ]
   },

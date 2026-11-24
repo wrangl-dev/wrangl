@@ -416,21 +416,20 @@ export function FeaturesPage() {
             <section className="split2" aria-label="RPC and market data">
               <div className="panel-card">
                 <span className="tag mono" style={{ color: 'var(--dim)', fontSize: 12 }}>
-                  project secrets
+                  settings
                 </span>
                 <h3 style={{ marginTop: 10 }}>Your own RPC</h3>
                 <p>
-                  The public RPC is free and rate-limited. Set{' '}
-                  <span className="mono">ROBINHOOD_RPC_URL</span> to your provider's endpoint, and
-                  every agent in the project reads through it. The URL stays in your system
-                  keychain; agents never see it.
+                  The public RPC is free and rate-limited, with keyless fallbacks when it is
+                  blocked. Paste your provider's endpoint in Settings, test it and save; every new
+                  chat reads through it. It stays on your machine and agents never see it.
                 </p>
                 <div className="snippet">
-                  <span className="c"># Settings → Robinhood Chain RPC</span>
+                  <span className="c"># Settings</span>
                   <br />
-                  ROBINHOOD_RPC_URL = https://…
+                  Robinhood Chain RPC = https://… <span className="c">[Test] [Save]</span>
                   <br />
-                  COINGECKO_API_KEY = <span className="c">(optional)</span>
+                  CoinGecko API key = <span className="c">(optional)</span>
                 </div>
               </div>
               <div className="panel-card">

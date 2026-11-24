@@ -2,8 +2,14 @@ import { formatBlock, formatGas } from '../../lib/chain';
 import { emitNewBlocks } from '../../lib/chain-feed';
 import { useChainStatus } from '../../lib/use-chain-status';
 
+const SOURCE_LABEL = {
+  provider: 'live',
+  public: 'public RPC',
+  fallback: 'public fallback RPC',
+} as const;
+
 export function ChainTicker() {
-  const { block, gas, live, unreachable } = useChainStatus(true, emitNewBlocks);
+  const { block, gas, live, unreachable, source } = useChainStatus(true, emitNewBlocks);
 
   const blockText = block !== null ? formatBlock(block) : unreachable ? 'offline' : '…';
   const gasText = gas !== null ? formatGas(gas) : unreachable ? '–' : '…';
@@ -30,7 +36,9 @@ export function ChainTicker() {
           chain id <b>4663</b>
         </span>
         <span className="sep">/</span>
-        <span id="src">{unreachable ? 'RPC unreachable from this network' : 'public RPC'}</span>
+        <span id="src">
+          {unreachable ? 'RPC unreachable from this network' : SOURCE_LABEL[source ?? 'public']}
+        </span>
       </div>
     </div>
   );

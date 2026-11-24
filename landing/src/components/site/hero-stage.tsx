@@ -132,22 +132,30 @@ export function HeroStage() {
     >
       <div className="stack" id="stack" ref={stackRef} aria-hidden="true">
         <div className="layer l-base" style={layerStyle(0)}>
-          <div className="face tm">
+          <div className="face chatwin">
             <div className="bar">
               <span>storefront · Claude Agent</span>
               <span className="dim">chat</span>
             </div>
-            <div className="body">
-              <p>
-                <span className="dim">you</span> Is this token safe to buy?
-              </p>
-              <p>
-                <span className="ok">●</span> wrangl: chain_token <span className="dim">done</span>
-              </p>
-              <p>
-                <span className="ok">●</span> wrangl: swap_quote <span className="dim">done</span>
-              </p>
-              <p>Owner renounced, no mint. 10 USDG gets about 0.0057 ETH.</p>
+            <div className="cw-cols">
+              <div className="cw-side">
+                <span className="dim">projects</span>
+                <span className="cw-on">storefront</span>
+                <span className="dim cw-sub">token check</span>
+                <span className="dim cw-sub">cart fix</span>
+                <span>api</span>
+              </div>
+              <div className="cw-msgs">
+                <p className="cw-me">Is this token safe to buy?</p>
+                <p className="cw-tool">
+                  <span className="ok">●</span> chain_token <span className="dim">done</span>
+                </p>
+                <p className="cw-tool">
+                  <span className="ok">●</span> swap_quote <span className="dim">done</span>
+                </p>
+                <p className="cw-ans">Owner renounced, no mint. 10 USDG gets about 0.0057 ETH.</p>
+                <p className="cw-input dim">Ask Claude Agent…</p>
+              </div>
             </div>
           </div>
           <i className="pin" data-call="0" style={{ left: '50%', top: '100%' }}></i>

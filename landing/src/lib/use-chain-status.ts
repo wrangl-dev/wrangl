@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { CHAIN_POLL_MS, fetchChainReading } from './chain';
+import { CHAIN_POLL_MS, type ChainSource, fetchChainReading } from './chain';
 
 export type ChainStatus = {
   block: number | null;
@@ -9,12 +9,20 @@ export type ChainStatus = {
   live: boolean;
   /** Last request failed and no block was ever seen. */
   unreachable: boolean;
+  /** Who answered last, or null before the first answer. */
+  source: ChainSource | null;
 };
 
-const INITIAL: ChainStatus = { block: null, gas: null, live: false, unreachable: false };
+const INITIAL: ChainStatus = {
+  block: null,
+  gas: null,
+  live: false,
+  unreachable: false,
+  source: null,
+};
 
 /**
- * Polls the public Robinhood Chain RPC every 3s while `enabled`.
+ * Polls Robinhood Chain every 3s while `enabled`, through the official RPC or a public fallback.
  * `onNewBlock` gets how many blocks the chain advanced (capped at 4).
  */
 export function useChainStatus(enabled: boolean, onNewBlock?: (grew: number) => void): ChainStatus {
@@ -28,7 +36,7 @@ export function useChainStatus(enabled: boolean, onNewBlock?: (grew: number) => 
 
     const tick = async () => {
       try {
-        const { blockNumber: n, gwei: g } = await fetchChainReading(ctrl.signal);
+        const { blockNumber: n, gwei: g, source } = await fetchChainReading(ctrl.signal);
         if (cancelled) return;
         const changed = Boolean(n) && n !== last;
         if (changed) {
@@ -41,6 +49,7 @@ export function useChainStatus(enabled: boolean, onNewBlock?: (grew: number) => 
           gas: Number.isFinite(g) ? g : s.gas,
           live: true,
           unreachable: false,
+          source,
         }));
       } catch {
         if (cancelled) return;

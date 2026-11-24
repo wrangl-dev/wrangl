@@ -445,7 +445,6 @@ body {
 :where(.site) .layer {
   position: absolute;
   transform-style: preserve-3d;
-  will-change: transform;
 }
 
 :where(.site) .face {
@@ -538,14 +537,14 @@ body {
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   background: #111;
-  font: 10px / 1.4 var(--mono);
-  color: var(--muted);
+  font: 11px / 1.4 var(--mono);
+  color: #b5b5b5;
 }
 
 :where(.site) .tm .body {
   padding: 8px 10px 10px;
-  font: 10px / 1.65 var(--mono);
-  color: #d0d0d0;
+  font: 11px / 1.6 var(--mono);
+  color: #e0e0e0;
 }
 
 :where(.site) .tm .body p {
@@ -555,9 +554,85 @@ body {
   text-overflow: ellipsis;
 }
 
+:where(.site) .chatwin {
+  display: flex;
+  flex-direction: column;
+  background: #0e0e0e;
+}
+
+:where(.site) .chatwin .bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #121212;
+  font: 11px / 1.4 var(--mono);
+  color: #b5b5b5;
+}
+
+/* The side cards cover the window's corners, so the messages sit in the open middle. */
+:where(.site) .chatwin .cw-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 24% 1fr;
+  min-height: 0;
+}
+
+:where(.site) .chatwin .cw-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-right: 1px solid var(--line);
+  font: 10.5px / 1.4 var(--mono);
+  color: #cfcfcf;
+}
+
+:where(.site) .chatwin .cw-on {
+  color: var(--text);
+}
+
+:where(.site) .chatwin .cw-sub {
+  padding-left: 8px;
+}
+
+:where(.site) .chatwin .cw-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 26px 30% 12px 14px;
+  font: 12px / 1.5 var(--sans);
+  color: #e6e6e6;
+}
+
+:where(.site) .chatwin .cw-msgs p {
+  margin: 0;
+}
+
+:where(.site) .chatwin .cw-me {
+  align-self: flex-start;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: #1f1f1f;
+  color: var(--text);
+}
+
+:where(.site) .chatwin .cw-tool {
+  font: 11px / 1.4 var(--mono);
+  color: #cfcfcf;
+}
+
+:where(.site) .chatwin .cw-input {
+  margin-top: auto !important;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 11px;
+}
+
 :where(.site) .card {
-  font: 10px / 1.6 var(--mono);
-  color: #d0d0d0;
+  font: 11px / 1.55 var(--mono);
+  color: #e0e0e0;
   background: linear-gradient(180deg, #151515, #0f0f0f);
 }
 
@@ -585,7 +660,7 @@ body {
 }
 
 :where(.site) .stack .dim {
-  color: var(--dim);
+  color: #8c8c8c;
 }
 
 :where(.site) .stack .ok {
@@ -619,7 +694,7 @@ body {
 }
 
 :where(.site) .sign .btns span {
-  font: 600 9.5px / 1 var(--sans);
+  font: 600 10.5px / 1 var(--sans);
   padding: 6px 8px;
   border-radius: 5px;
   border: 1px solid var(--line-strong);

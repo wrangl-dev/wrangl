@@ -28,6 +28,11 @@ pub const COMMANDS: &[&str] = &[
     "agent_list",
     "agent_start",
     "files_search",
+    "portfolio_get",
+    "watchlist_get",
+    "watchlist_add",
+    "watchlist_remove",
+    "watchlist_alerts",
     "history_list",
     "history_load",
     "history_save",
@@ -59,6 +64,7 @@ pub struct Backend {
     pub settings: crate::settings::SettingsStore,
     pub wallet: crate::wallet::WalletHandle,
     pub history: crate::history::HistoryStore,
+    pub watchlist: crate::watchlist::WatchlistStore,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -68,6 +74,15 @@ pub struct Effects {
     pub killed_pty: Option<String>,
     pub started_chat: Option<String>,
     pub stopped_chat: Option<String>,
+}
+
+/// The user's RPC and market key from Settings, else the public sources.
+fn chain_sources(backend: &Backend) -> crate::chain::client::Sources {
+    let saved = backend.settings.load();
+    crate::chain::client::Sources::from_settings(
+        saved.rpc_url().as_deref(),
+        saved.coingecko_key().as_deref(),
+    )
 }
 
 /// Tauri serialises a `Channel` argument as `"__CHANNEL__:<id>"`; the browser client does too.
@@ -120,6 +135,17 @@ struct StartArgs {
     /// The agent's session id from an earlier run, to continue that conversation.
     #[serde(default)]
     resume: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WatchArgs {
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    above: Option<f64>,
+    #[serde(default)]
+    below: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -299,6 +325,88 @@ pub async fn dispatch(
             .await
             .map_err(|e| e.to_string())?;
             json!(found)
+        }
+        "portfolio_get" => {
+            let a: WatchArgs = if input.is_null() {
+                WatchArgs::default()
+            } else {
+                args(cmd, input)?
+            };
+            let owner = a
+                .address
+                .or_else(|| backend.wallet.address())
+                .ok_or_else(|| "connect a wallet first (Wallet in the sidebar)".to_string())?;
+            let sources = chain_sources(backend);
+            let mut tokens = crate::chain::portfolio::top_tokens_cached(&sources)
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!("[portfolio] top tokens: {e}");
+                    vec![]
+                });
+            for w in backend.watchlist.load() {
+                if !tokens.iter().any(|t| t.address == w.address) {
+                    tokens.push(crate::chain::portfolio::TokenInfo {
+                        address: w.address,
+                        symbol: w.symbol,
+                        name: w.name,
+                        decimals: w.decimals,
+                    });
+                }
+            }
+            serde_json::to_value(
+                crate::chain::portfolio::portfolio(&sources, &owner, tokens).await?,
+            )
+            .map_err(|e| e.to_string())?
+        }
+        "watchlist_get" => {
+            let items = backend.watchlist.load();
+            let addresses: Vec<String> = items.iter().map(|i| i.address.clone()).collect();
+            let (markets, market_error) = if addresses.is_empty() {
+                (vec![], None)
+            } else {
+                match crate::chain::portfolio::markets(&chain_sources(backend), &addresses).await {
+                    Ok(m) => (m, None),
+                    Err(e) => {
+                        log::warn!("[watchlist] market data: {e}");
+                        (vec![], Some(e))
+                    }
+                }
+            };
+            json!({ "items": items, "markets": markets, "marketError": market_error })
+        }
+        "watchlist_add" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            let info =
+                crate::chain::portfolio::token_info(&chain_sources(backend), &address).await?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(0));
+            json!(backend.watchlist.add(crate::watchlist::WatchItem {
+                address: info.address,
+                symbol: info.symbol,
+                name: info.name,
+                decimals: info.decimals,
+                added_at: now,
+                alert_above: None,
+                alert_below: None,
+            })?)
+        }
+        "watchlist_remove" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            json!(backend.watchlist.remove(&address)?)
+        }
+        "watchlist_alerts" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            json!(backend.watchlist.set_alerts(&address, a.above, a.below)?)
         }
         "history_list" => json!(backend.history.list()?),
         "history_load" => {

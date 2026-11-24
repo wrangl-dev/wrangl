@@ -22,6 +22,8 @@ interface Props {
   onOpenSettings?: () => void;
   walletOpen?: boolean;
   onOpenWallet?: () => void;
+  portfolioOpen?: boolean;
+  onOpenPortfolio?: () => void;
   /** Proposals waiting for the user's signature. */
   walletPending?: number;
 }
@@ -42,6 +44,8 @@ export function Sidebar({
   onOpenSettings,
   walletOpen = false,
   onOpenWallet,
+  portfolioOpen = false,
+  onOpenPortfolio,
   walletPending = 0,
 }: Props) {
   const [typing, setTyping] = useState(!pickFolder && projects.length === 0);
@@ -199,6 +203,17 @@ export function Sidebar({
 
       {onOpenSettings && (
         <footer className="sidebar-foot">
+          {onOpenPortfolio && (
+            <button
+              type="button"
+              className="sidebar-link"
+              aria-pressed={portfolioOpen}
+              onClick={onOpenPortfolio}
+            >
+              <Icon name="chart" size={14} />
+              Portfolio
+            </button>
+          )}
           {onOpenWallet && (
             <button
               type="button"

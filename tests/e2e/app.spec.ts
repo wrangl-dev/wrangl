@@ -236,7 +236,39 @@ test.describe('wallet and settings', () => {
   });
 });
 
+test.describe('portfolio', () => {
+  test('without a wallet the Portfolio page offers to connect one', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    const portfolio = page.getByRole('region', { name: 'Portfolio' });
+    await expect(portfolio.getByRole('heading', { name: 'No wallet connected' })).toBeVisible();
+    await portfolio.getByRole('button', { name: 'Open Wallet' }).click();
+    await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
+  });
+});
+
 test.describe('Robinhood Chain @network', () => {
+  test('the watchlist reads a token, keeps its alert, and lets it go', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    const portfolio = page.getByRole('region', { name: 'Portfolio' });
+    await portfolio.getByRole('textbox', { name: 'Token address' }).fill(USDG);
+    await portfolio.getByRole('button', { name: 'Watch' }).click();
+    const table = portfolio.getByRole('table', { name: 'Watched tokens' });
+    await expect(table).toContainText('USDG', { timeout: 40_000 });
+    await expect(table).toContainText('$', { timeout: 40_000 });
+
+    await portfolio.getByLabel('Alert USDG above').fill('5');
+    await table.getByRole('button', { name: 'Save' }).click();
+    await expect(table.getByRole('button', { name: 'Save' })).toHaveCount(0);
+
+    await page.reload();
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    await expect(page.getByLabel('Alert USDG above')).toHaveValue('5', { timeout: 40_000 });
+    await page.getByRole('button', { name: 'Stop watching USDG' }).click();
+    await expect(page.getByRole('table', { name: 'Watched tokens' })).toHaveCount(0);
+  });
+
   test('chain_status reads the chain through the tool server', async ({ page }) => {
     await openChat(page);
     await send(page, '/tool chain_status {}');

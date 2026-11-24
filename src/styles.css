@@ -1431,3 +1431,107 @@ button:disabled {
   color: var(--dim);
   font-style: italic;
 }
+
+/* Portfolio */
+.portfolio-total {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.portfolio-value {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.portfolio-note {
+  margin-top: 10px !important;
+}
+
+.up {
+  color: #6fcf7c;
+}
+
+.down {
+  color: #ef7a7a;
+}
+
+.data-table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-weight: 500;
+  text-align: left;
+}
+
+.data-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.data-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.alert-editor {
+  display: flex;
+  gap: 4px;
+}
+
+.alert-editor input {
+  width: 76px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.alert-editor button {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+/* Price alerts, bottom right over everything. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  /* Above the status bar. */
+  bottom: 40px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid #c6f432;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  font-size: 13px;
+}
+
+.toast button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}

@@ -14,6 +14,7 @@ fn offline() -> Backend {
         settings: crate::settings::SettingsStore::new(None),
         wallet: crate::wallet::WalletHandle::in_memory(),
         history: crate::history::HistoryStore::new(None),
+        watchlist: crate::watchlist::WatchlistStore::new(None),
     }
 }
 

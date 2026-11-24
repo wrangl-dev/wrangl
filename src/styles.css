@@ -883,7 +883,9 @@ button:disabled {
 }
 
 .project-row:hover .row-action,
-.chat-list li:hover .row-action {
+.project-row:focus-within .row-action,
+.chat-list li:hover .row-action,
+.chat-list li:focus-within .row-action {
   visibility: visible;
 }
 

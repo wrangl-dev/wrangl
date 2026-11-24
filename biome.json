@@ -4,6 +4,7 @@
     "includes": [
       "**",
       "!dist",
+      "!tests/e2e/.out",
       "!src-tauri/target",
       "!src-tauri/gen",
       "!legacy",

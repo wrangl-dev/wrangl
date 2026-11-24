@@ -44,6 +44,10 @@ pub const FALLBACK_RPCS: &[(&str, &str)] = &[
     ("https://robinhood.drpc.org", "public fallback (dRPC)"),
 ];
 
+/// Which public RPC answered last, for the whole process: a new [`Sources::public`] starts
+/// there, so where the official RPC is blocked each call does not wait for it to time out.
+static PUBLIC_LAST_GOOD: AtomicUsize = AtomicUsize::new(0);
+
 /// One RPC to try, and what the agent is told it is.
 #[derive(Debug, Clone)]
 pub struct Endpoint {
@@ -56,6 +60,8 @@ pub struct Sources {
     endpoints: Vec<Endpoint>,
     /// The endpoint that answered last; tried first next time.
     current: AtomicUsize,
+    /// The public list (official RPC, then fallbacks): shares its last good endpoint.
+    public: bool,
     market_root: &'static str,
     market_key: Option<String>,
     market_label: &'static str,
@@ -73,7 +79,13 @@ impl Sources {
             url: (*url).to_string(),
             label,
         });
-        Self::with_endpoints(std::iter::once(official).chain(fallbacks).collect())
+        let mut sources =
+            Self::with_endpoints(std::iter::once(official).chain(fallbacks).collect());
+        sources.public = true;
+        sources
+            .current
+            .store(PUBLIC_LAST_GOOD.load(Ordering::Relaxed), Ordering::Relaxed);
+        sources
     }
 
     /// Read through exactly these RPCs, in order.
@@ -82,6 +94,7 @@ impl Sources {
         Self {
             endpoints,
             current: AtomicUsize::new(0),
+            public: false,
             market_root: GECKOTERMINAL_API,
             market_key: None,
             market_label: "geckoterminal",
@@ -99,6 +112,7 @@ impl Sources {
                 label: "your ROBINHOOD_RPC_URL",
             }];
             sources.current = AtomicUsize::new(0);
+            sources.public = false;
         }
         if let Some(key) = coingecko_key.map(str::trim).filter(|k| !k.is_empty()) {
             sources.market_root = COINGECKO_ONCHAIN_API;
@@ -187,6 +201,9 @@ pub async fn rpc_batch(
                     log::info!("[chain] switched to {}", endpoint.label);
                 }
                 sources.current.store(index, Ordering::Relaxed);
+                if sources.public {
+                    PUBLIC_LAST_GOOD.store(index, Ordering::Relaxed);
+                }
                 return Ok(out);
             }
             Err(e) => errors.push(e),
@@ -260,7 +277,13 @@ async fn post_batch(
 }
 
 async fn market_get(sources: &Sources, path: &str) -> Result<Value, String> {
-    let url = format!("{}/networks/{MARKET_NETWORK}/{path}", sources.market_root);
+    market_get_root(sources, &format!("networks/{MARKET_NETWORK}/{path}")).await
+}
+
+/// GET `path` under the market API's root (GeckoTerminal, or CoinGecko's on-chain API with a
+/// key), e.g. `simple/networks/robinhood/token_price/…`.
+pub(crate) async fn market_get_root(sources: &Sources, path: &str) -> Result<Value, String> {
+    let url = format!("{}/{path}", sources.market_root);
     let mut request = client().get(url).header("accept", "application/json");
     if let Some(key) = &sources.market_key {
         request = request.header("x-cg-demo-api-key", key);

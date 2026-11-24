@@ -7,8 +7,13 @@
 //                             session/new), shows it as a tool call, and replies with the result
 //   /ask                      asks the user for permission, replies with the option they chose
 //   /plan                     sends a three-step plan
+//   /edit                     asks to edit README.md, showing the diff, then reports the edit
 //   /slow                     streams a chunk every 200ms until the turn is cancelled
-//   anything else             replies "pong: <text>" in two chunks, with Markdown
+//   anything else             replies "pong: <text>" in two chunks, with Markdown, and lists
+//                             the files mentioned with @ (resource links) as "files: a, b"
+//
+// It supports session/load: a loaded session replays "replayed earlier answer" (Wrangl already
+// shows the saved messages, so the replay must not appear twice) and then works as usual.
 //
 // Every reply ends the turn with stopReason end_turn (or cancelled).
 
@@ -53,7 +58,7 @@ const say = (sessionId: string, text: string) =>
   update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function prompt(sessionId: string, text: string): Promise<string> {
+async function prompt(sessionId: string, text: string, links: string[] = []): Promise<string> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`unknown session ${sessionId}`);
   session.cancelled = false;
@@ -109,6 +114,45 @@ async function prompt(sessionId: string, text: string): Promise<string> {
     return 'end_turn';
   }
 
+  if (text === '/edit') {
+    const diff = {
+      type: 'diff',
+      path: 'README.md',
+      oldText: '# storefront\n',
+      newText: '# storefront\n\nSells tokenized goods.\n',
+    };
+    const toolCallId = `edit-${Date.now()}`;
+    const result = await ask('session/request_permission', {
+      sessionId,
+      toolCall: {
+        toolCallId,
+        title: 'Edit README.md',
+        kind: 'edit',
+        status: 'pending',
+        content: [diff],
+      },
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+      ],
+    });
+    if (result?.outcome?.optionId !== 'allow-once') {
+      say(sessionId, 'edit skipped');
+      return 'end_turn';
+    }
+    update(sessionId, {
+      sessionUpdate: 'tool_call',
+      toolCallId,
+      title: 'Edit README.md',
+      kind: 'edit',
+      status: 'in_progress',
+      content: [diff],
+    });
+    update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' });
+    say(sessionId, 'README updated');
+    return 'end_turn';
+  }
+
   if (text === '/plan') {
     update(sessionId, {
       sessionUpdate: 'plan',
@@ -131,6 +175,13 @@ async function prompt(sessionId: string, text: string): Promise<string> {
     return 'end_turn';
   }
 
+  if (links.length)
+    say(
+      sessionId,
+      `files: ${links.join(', ')}
+
+`,
+    );
   say(sessionId, 'pong: ');
   await sleep(50);
   say(sessionId, `**${text}**`);
@@ -205,7 +256,7 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       case 'initialize':
         respond(m.id, {
           protocolVersion: 1,
-          agentCapabilities: { loadSession: false, promptCapabilities: {} },
+          agentCapabilities: { loadSession: true, promptCapabilities: {} },
           authMethods: [],
           agentInfo: { name: 'wrangl-e2e-agent', version: '1.0.0' },
         });
@@ -216,12 +267,24 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
         respond(m.id, { sessionId });
         break;
       }
+      case 'session/load': {
+        const sessionId = String(m.params?.sessionId);
+        sessions.set(sessionId, { mcp: m.params?.mcpServers ?? [], cancelled: false });
+        say(sessionId, 'replayed earlier answer');
+        respond(m.id, {});
+        break;
+      }
       case 'session/prompt': {
-        const text = (m.params?.prompt ?? [])
-          .map((b: { text?: string }) => b.text ?? '')
+        const blocks: { type: string; text?: string; name?: string; uri?: string }[] =
+          m.params?.prompt ?? [];
+        const text = blocks
+          .map((b) => b.text ?? '')
           .join('')
           .trim();
-        const stopReason = await prompt(m.params.sessionId, text);
+        const links = blocks
+          .filter((b) => b.type === 'resource_link' && String(b.uri).startsWith('file:///'))
+          .map((b) => String(b.name));
+        const stopReason = await prompt(m.params.sessionId, text, links);
         respond(m.id, { stopReason });
         break;
       }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChatHome } from './components/ChatHome';
 import { Icon } from './components/Icon';
+import { PortfolioPage } from './components/PortfolioPage';
 import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { TerminalTabs } from './components/TerminalTabs';
@@ -16,6 +17,7 @@ import {
   removeProject,
   saveProjects,
 } from './lib/projects';
+import { useWatchAlerts } from './lib/use-watch-alerts';
 import { useWalletStatus } from './lib/wallet';
 
 const ACTIVE_KEY = 'wrangl.activeProject.v1';
@@ -49,6 +51,8 @@ export function App({ store = chatStore, pickFolder }: Props) {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const alerts = useWatchAlerts();
   const wallet = useWalletStatus(5000);
   const walletPending = wallet.snapshot?.requests.length ?? 0;
   // A proposal from an agent opens the Wallet page so it is not missed.
@@ -57,9 +61,15 @@ export function App({ store = chatStore, pickFolder }: Props) {
     if (walletPending > seenPending) {
       setWalletOpen(true);
       setSettingsOpen(false);
+      setPortfolioOpen(false);
     }
     setSeenPending(walletPending);
   }, [walletPending, seenPending]);
+
+  // Saved chats come back after a restart.
+  useEffect(() => {
+    void store.restore();
+  }, [store]);
 
   useEffect(() => {
     loadAppInfo()
@@ -148,11 +158,19 @@ export function App({ store = chatStore, pickFolder }: Props) {
         onOpenSettings={() => {
           setSettingsOpen((o) => !o);
           setWalletOpen(false);
+          setPortfolioOpen(false);
         }}
         walletOpen={walletOpen}
         onOpenWallet={() => {
           setWalletOpen((o) => !o);
           setSettingsOpen(false);
+          setPortfolioOpen(false);
+        }}
+        portfolioOpen={portfolioOpen}
+        onOpenPortfolio={() => {
+          setPortfolioOpen((o) => !o);
+          setSettingsOpen(false);
+          setWalletOpen(false);
         }}
         walletPending={walletPending}
       />
@@ -169,6 +187,27 @@ export function App({ store = chatStore, pickFolder }: Props) {
         {/* Over the chat; chats and their agents keep running underneath. */}
         {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
         {walletOpen && <WalletPage onClose={() => setWalletOpen(false)} />}
+        {portfolioOpen && (
+          <PortfolioPage
+            onClose={() => setPortfolioOpen(false)}
+            onOpenWallet={() => {
+              setPortfolioOpen(false);
+              setWalletOpen(true);
+            }}
+          />
+        )}
+        {alerts.notices.length > 0 && (
+          <div className="toasts" role="status" aria-label="Price alerts">
+            {alerts.notices.map((n) => (
+              <div key={n.id} className="toast">
+                <span>{n.text}</span>
+                <button type="button" aria-label="Dismiss" onClick={() => alerts.dismiss(n.id)}>
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {projects
           .filter((p) => terminalProjects.includes(p.id))
           .map((p) => (

@@ -39,6 +39,7 @@ url = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 subtle = "2"
+ignore = "0.4"
 
 [profile.release]
 codegen-units = 1

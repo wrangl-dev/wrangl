@@ -27,6 +27,16 @@ pub const COMMANDS: &[&str] = &[
     "pty_kill",
     "agent_list",
     "agent_start",
+    "files_search",
+    "portfolio_get",
+    "watchlist_get",
+    "watchlist_add",
+    "watchlist_remove",
+    "watchlist_alerts",
+    "history_list",
+    "history_load",
+    "history_save",
+    "history_delete",
     "agent_prompt",
     "agent_cancel",
     "agent_permission",
@@ -53,6 +63,8 @@ pub struct Backend {
     pub chats: AgentSessions,
     pub settings: crate::settings::SettingsStore,
     pub wallet: crate::wallet::WalletHandle,
+    pub history: crate::history::HistoryStore,
+    pub watchlist: crate::watchlist::WatchlistStore,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -62,6 +74,15 @@ pub struct Effects {
     pub killed_pty: Option<String>,
     pub started_chat: Option<String>,
     pub stopped_chat: Option<String>,
+}
+
+/// The user's RPC and market key from Settings, else the public sources.
+fn chain_sources(backend: &Backend) -> crate::chain::client::Sources {
+    let saved = backend.settings.load();
+    crate::chain::client::Sources::from_settings(
+        saved.rpc_url().as_deref(),
+        saved.coingecko_key().as_deref(),
+    )
 }
 
 /// Tauri serialises a `Channel` argument as `"__CHANNEL__:<id>"`; the browser client does too.
@@ -111,6 +132,35 @@ struct StartArgs {
     agent_id: String,
     cwd: String,
     on_event: Value,
+    /// The agent's session id from an earlier run, to continue that conversation.
+    #[serde(default)]
+    resume: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WatchArgs {
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    above: Option<f64>,
+    #[serde(default)]
+    below: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct FilesSearchArgs {
+    cwd: String,
+    #[serde(default)]
+    query: String,
+}
+
+#[derive(Deserialize)]
+struct HistoryArgs {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    record: Value,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +169,12 @@ struct ChatArgs {
     session_id: String,
     #[serde(default)]
     text: String,
+    /// The project folder, to resolve `files` in.
+    #[serde(default)]
+    cwd: Option<String>,
+    /// Project-relative paths mentioned with `@`.
+    #[serde(default)]
+    files: Vec<String>,
     #[serde(default)]
     request_id: String,
     #[serde(default)]
@@ -250,13 +306,138 @@ pub async fn dispatch(
                 }
                 Err(e) => log::warn!("[wallet] tools start without the wallet: {e}"),
             }
-            let id = backend.chats.start(line, cwd, tool_env, Arc::new(emit));
+            let id = backend
+                .chats
+                .start(line, cwd, tool_env, a.resume, Arc::new(emit));
             effects.started_chat = Some(id.clone());
             json!(id)
         }
+        "files_search" => {
+            let a: FilesSearchArgs = args(cmd, input)?;
+            let root = std::path::PathBuf::from(&a.cwd);
+            if !root.is_dir() {
+                return Err(format!("{} is not a folder", a.cwd));
+            }
+            // Walking a big folder takes a moment; keep it off the async workers.
+            let found = tokio::task::spawn_blocking(move || {
+                crate::files::search(&root, &a.query, crate::files::RESULT_LIMIT)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            json!(found)
+        }
+        "portfolio_get" => {
+            let a: WatchArgs = if input.is_null() {
+                WatchArgs::default()
+            } else {
+                args(cmd, input)?
+            };
+            let owner = a
+                .address
+                .or_else(|| backend.wallet.address())
+                .ok_or_else(|| "connect a wallet first (Wallet in the sidebar)".to_string())?;
+            let sources = chain_sources(backend);
+            let mut tokens = crate::chain::portfolio::top_tokens_cached(&sources)
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!("[portfolio] top tokens: {e}");
+                    vec![]
+                });
+            for w in backend.watchlist.load() {
+                if !tokens.iter().any(|t| t.address == w.address) {
+                    tokens.push(crate::chain::portfolio::TokenInfo {
+                        address: w.address,
+                        symbol: w.symbol,
+                        name: w.name,
+                        decimals: w.decimals,
+                    });
+                }
+            }
+            serde_json::to_value(
+                crate::chain::portfolio::portfolio(&sources, &owner, tokens).await?,
+            )
+            .map_err(|e| e.to_string())?
+        }
+        "watchlist_get" => {
+            let items = backend.watchlist.load();
+            let addresses: Vec<String> = items.iter().map(|i| i.address.clone()).collect();
+            let (markets, market_error) = if addresses.is_empty() {
+                (vec![], None)
+            } else {
+                match crate::chain::portfolio::markets(&chain_sources(backend), &addresses).await {
+                    Ok(m) => (m, None),
+                    Err(e) => {
+                        log::warn!("[watchlist] market data: {e}");
+                        (vec![], Some(e))
+                    }
+                }
+            };
+            json!({ "items": items, "markets": markets, "marketError": market_error })
+        }
+        "watchlist_add" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            let info =
+                crate::chain::portfolio::token_info(&chain_sources(backend), &address).await?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(0));
+            json!(backend.watchlist.add(crate::watchlist::WatchItem {
+                address: info.address,
+                symbol: info.symbol,
+                name: info.name,
+                decimals: info.decimals,
+                added_at: now,
+                alert_above: None,
+                alert_below: None,
+            })?)
+        }
+        "watchlist_remove" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            json!(backend.watchlist.remove(&address)?)
+        }
+        "watchlist_alerts" => {
+            let a: WatchArgs = args(cmd, input)?;
+            let address = a
+                .address
+                .ok_or_else(|| "give a token address".to_string())?;
+            json!(backend.watchlist.set_alerts(&address, a.above, a.below)?)
+        }
+        "history_list" => json!(backend.history.list()?),
+        "history_load" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.load(&a.id)?
+        }
+        "history_save" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.save(&a.record)?;
+            Value::Null
+        }
+        "history_delete" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.delete(&a.id)?;
+            Value::Null
+        }
         "agent_prompt" => {
             let a: ChatArgs = args(cmd, input)?;
-            backend.chats.prompt(&a.session_id, a.text)?;
+            let mut files = vec![];
+            if !a.files.is_empty() {
+                let root = std::path::PathBuf::from(
+                    a.cwd
+                        .as_deref()
+                        .ok_or_else(|| "files need the project folder".to_string())?,
+                );
+                for rel in &a.files {
+                    let path = crate::files::resolve(&root, rel)?;
+                    files.push((rel.clone(), crate::files::file_uri(&path)?));
+                }
+            }
+            backend.chats.prompt(&a.session_id, a.text, files)?;
             Value::Null
         }
         "agent_cancel" => {

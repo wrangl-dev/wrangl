@@ -7,9 +7,10 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{
     AuthCapabilities, AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock,
-    EnvVariable, ErrorCode, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, TextContent,
+    EnvVariable, ErrorCode, InitializeRequest, LoadSessionRequest, McpServer, McpServerStdio,
+    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome, SessionId,
+    SessionNotification, TextContent,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, Client, ConnectionTo, LineDirection};
@@ -40,6 +41,12 @@ pub enum AgentEvent {
         tool_call: Value,
         options: Value,
     },
+    /// The agent's own session id, to save and resume later. `resumed`: an earlier session was
+    /// loaded (the agent remembers it); false when a fresh session had to be started.
+    Session {
+        agent_session_id: String,
+        resumed: bool,
+    },
     /// A prompt finished. `stop_reason` is ACP's (`end_turn`, `cancelled`, ...).
     TurnEnd { stop_reason: Value },
     /// Something failed; the session may still be usable.
@@ -52,7 +59,8 @@ pub enum AgentEvent {
 pub type EventFn = Arc<dyn Fn(AgentEvent) + Send + Sync>;
 
 enum Command {
-    Prompt(String),
+    /// The message and the files mentioned in it, as `(name, file:// link)`.
+    Prompt(String, Vec<(String, String)>),
     Cancel,
     Authenticate(String),
     Stop,
@@ -109,13 +117,15 @@ fn acp_agent(line: &CommandLine, stderr: Arc<Mutex<VecDeque<String>>>) -> AcpAge
 
 impl AgentSessions {
     /// Start `line` as an ACP agent with a session in `cwd`. `tool_env` goes to Wrangl's tool
-    /// server for this chat (RPC settings, the wallet link). Returns the session id at once;
-    /// progress arrives as events.
+    /// server for this chat (RPC settings, the wallet link). `resume` is the agent's session id
+    /// from an earlier run: it is loaded when the agent supports `session/load`. Returns Wrangl's
+    /// id for the chat at once; progress arrives as events.
     pub fn start(
         &self,
         line: CommandLine,
         cwd: PathBuf,
         tool_env: Vec<(String, String)>,
+        resume: Option<String>,
         emit: EventFn,
     ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
@@ -151,6 +161,7 @@ impl AgentSessions {
                 agent,
                 cwd,
                 tools,
+                resume,
                 rx,
                 permissions,
                 auth_methods,
@@ -183,11 +194,17 @@ impl AgentSessions {
             .map_err(|_| "the agent has stopped".to_string())
     }
 
-    pub fn prompt(&self, id: &str, text: String) -> Result<(), String> {
+    /// Send a message. `files` are `(name, file:// link)` pairs the agent gets as resource links.
+    pub fn prompt(
+        &self,
+        id: &str,
+        text: String,
+        files: Vec<(String, String)>,
+    ) -> Result<(), String> {
         if text.trim().is_empty() {
             return Err("the message is empty".into());
         }
-        self.send(id, Command::Prompt(text))
+        self.send(id, Command::Prompt(text, files))
     }
 
     pub fn cancel(&self, id: &str) -> Result<(), String> {
@@ -308,6 +325,7 @@ async fn run(
     agent: AcpAgent,
     cwd: PathBuf,
     tools: Vec<McpServer>,
+    resume: Option<String>,
     mut commands: mpsc::UnboundedReceiver<Command>,
     permissions: Arc<Mutex<HashMap<String, oneshot::Sender<Option<String>>>>>,
     known_auth: Arc<Mutex<Value>>,
@@ -369,14 +387,33 @@ async fn run(
             log::info!("[agents] initialized; sign-in methods: {auth_methods}");
             *known_auth.lock() = auth_methods.clone();
 
-            // Open the session; when the agent wants a sign-in, wait for the user's choice.
-            let session_id: SessionId = loop {
-                match cx
-                    .send_request(NewSessionRequest::new(cwd.clone()).mcp_servers(tools.clone()))
-                    .block_task()
-                    .await
-                {
-                    Ok(created) => break created.session_id,
+            // Continue the earlier session when the agent can load it; else open a new one.
+            // When the agent wants a sign-in first, wait for the user's choice and try again.
+            let mut resume = resume.filter(|_| init.agent_capabilities.load_session);
+            let (session_id, resumed): (SessionId, bool) = loop {
+                let opened = match &resume {
+                    Some(previous) => cx
+                        .send_request(
+                            LoadSessionRequest::new(previous.clone(), cwd.clone())
+                                .mcp_servers(tools.clone()),
+                        )
+                        .block_task()
+                        .await
+                        .map(|_| SessionId::new(previous.clone())),
+                    None => cx
+                        .send_request(
+                            NewSessionRequest::new(cwd.clone()).mcp_servers(tools.clone()),
+                        )
+                        .block_task()
+                        .await
+                        .map(|created| created.session_id),
+                };
+                match opened {
+                    Ok(id) => break (id, resume.is_some()),
+                    Err(e) if resume.is_some() && !is_auth_required(&e) => {
+                        log::warn!("[agents] could not load the earlier session: {}", e.message);
+                        resume = None;
+                    }
                     Err(e) if is_auth_required(&e) => {
                         main(AgentEvent::AuthRequired {
                             methods: auth_methods.clone(),
@@ -399,17 +436,22 @@ async fn run(
                     Err(e) => return Err(e),
                 }
             };
+            main(AgentEvent::Session {
+                agent_session_id: session_id.to_string(),
+                resumed,
+            });
             main(AgentEvent::Status {
                 state: "ready".into(),
             });
 
             while let Some(command) = commands.recv().await {
                 match command {
-                    Command::Prompt(text) => {
-                        let request = PromptRequest::new(
-                            session_id.clone(),
-                            vec![ContentBlock::Text(TextContent::new(text))],
-                        );
+                    Command::Prompt(text, files) => {
+                        let mut blocks = vec![ContentBlock::Text(TextContent::new(text))];
+                        blocks.extend(files.into_iter().map(|(name, uri)| {
+                            ContentBlock::ResourceLink(ResourceLink::new(name, uri))
+                        }));
+                        let request = PromptRequest::new(session_id.clone(), blocks);
                         let turn = cx.send_request(request).block_task();
                         let mut turn = std::pin::pin!(turn);
                         loop {
@@ -430,7 +472,7 @@ async fn run(
                                     Some(Command::Cancel) => {
                                         cx.send_notification(CancelNotification::new(session_id.clone()))?;
                                     }
-                                    Some(Command::Prompt(_)) => main(AgentEvent::Error {
+                                    Some(Command::Prompt(..)) => main(AgentEvent::Error {
                                         message: "wait for the current answer, or stop it first".into(),
                                     }),
                                     Some(Command::Authenticate(_)) => {}

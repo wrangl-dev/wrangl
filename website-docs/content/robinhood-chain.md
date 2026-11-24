@@ -23,6 +23,31 @@ Every chat starts Wrangl's tool server, so any agent can read Robinhood Chain (c
 
 These only read. They cannot move funds.
 
+## Research tools
+
+For digging into the trenches: new launches, who is buying, and whether a token holds up.
+
+| Tool             | What it returns                                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token_report`   | A full check in one call: contract facts, burned supply, holders and developer, the main pool's market and trading, Pons launch details, and risk flags with reasons. |
+| `token_search`   | Tokens and pools by name, symbol or address.                                                                                                                          |
+| `pools_trending` | What is trending over 5m, 1h, 6h or 24h.                                                                                                                              |
+| `pools_top`      | The biggest pools by 24h volume or transactions, on one launchpad or all.                                                                                             |
+| `launchpads`     | Every DEX and launchpad on Robinhood Chain (Pons, Clanker, Virtuals, Bankr, Uniswap and more).                                                                        |
+| `launches`       | The newest pools, across all DEXes or on one launchpad.                                                                                                               |
+| `pool_info`      | One pool: price, liquidity, FDV, and change, volume, buys, sells, buyers and sellers for 5m to 24h.                                                                   |
+| `pool_trades`    | The latest trades: totals, the largest trades, the wallets buying and selling the most, or one wallet's trades.                                                       |
+| `price_chart`    | Candles by minute, hour or day, with change, high, low, drop from the high and volatility.                                                                            |
+| `token_profile`  | Holder count and concentration, developer and their holding, score, honeypot flag, socials, launchpad progress, pools.                                                |
+| `pons_launch`    | A Pons coin's creator, curve pool, launch block and how full the curve is.                                                                                            |
+| `dev_launches`   | Every Pons launch by a creator, with each token's status. Serial launchers are a common warning sign.                                                                 |
+
+Try: "what is launching on Pons right now, and which ones look risky?", or the **Research** button next to a token in your [watchlist](/docs/settings).
+
+`pons_launch` and `dev_launches` read the chain's launch history, which only the official RPC serves far back. If your network blocks it, they say so; a VPN helps.
+
+Risk flags follow fixed rules: mint, pause, blacklist or upgrade functions with a live owner, a proxy, the top 10 holders above 50%, a developer holding 5% or more, a creator with 2 or more Pons launches, market cap above 100 times liquidity, under $5,000 of liquidity, and many buys with no sells.
+
 ## Tools that ask you
 
 | Tool                      | What happens                                                                                      |

@@ -291,6 +291,31 @@ test.describe('Robinhood Chain @network', () => {
     await expect(page.locator('.msg-tool').last()).toHaveAttribute('data-status', 'completed');
   });
 
+  test('research tools answer through the tool server', async ({ page }) => {
+    await openChat(page);
+    await send(page, '/tool launches {"launchpad":"pons-v2"}');
+    await expect(page.locator('.msg-tool').last()).toHaveAttribute('data-status', 'completed', {
+      timeout: 60_000,
+    });
+    await expect(lastAnswer(page)).toContainText('pons-v2');
+    await send(page, `/tool token_profile {"token":"${USDG}"}`);
+    await expect(lastAnswer(page)).toContainText(/holders/, { timeout: 60_000 });
+  });
+
+  test('Research on a watched token opens a chat with the request', async ({ page }) => {
+    await openChat(page);
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    const portfolio = page.getByRole('region', { name: 'Portfolio' });
+    await portfolio.getByRole('textbox', { name: 'Token address' }).fill(USDG);
+    await portfolio.getByRole('button', { name: 'Watch' }).click();
+    await portfolio.getByRole('button', { name: 'Research USDG' }).click({ timeout: 40_000 });
+    const box = page.getByRole('textbox', { name: 'Message' });
+    await expect(box).toHaveValue(/Research USDG \(0x5fc5/);
+    await expect(box).toHaveValue(/token_report/);
+    await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
+    await page.getByRole('button', { name: 'Stop watching USDG' }).click();
+  });
+
   test('Settings tests the public RPC', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Settings', exact: true }).click();

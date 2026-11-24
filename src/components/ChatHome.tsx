@@ -24,10 +24,10 @@ import { Logo } from './Logo';
 
 /** Starting points for a chat; clicking one fills the composer. */
 export const SUGGESTIONS = [
-  'Check a token on Robinhood Chain',
+  'What is trending on Robinhood Chain in the last hour?',
+  'Show the newest Pons launches and flag the risky ones',
+  'Research a token: ',
   'Show my wallet balance',
-  'Find new pools from today',
-  'Explain this project',
 ];
 
 const PHASE_TEXT: Record<string, string> = {
@@ -43,6 +43,8 @@ interface Props {
   /** A new chat got its first message. */
   onChatCreated: (chatId: string) => void;
   store?: ChatStore;
+  /** Text to start the composer with (a research request from the watchlist). */
+  initialDraft?: string;
   /** Project file search for `@` mentions; swapped in tests. */
   findFiles?: (cwd: string, query: string) => Promise<string[]>;
 }
@@ -90,9 +92,10 @@ export function ChatHome({
   onChatCreated,
   store = chatStore,
   findFiles = searchFiles,
+  initialDraft = '',
 }: Props) {
   useChatStore(store);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(initialDraft);
   const [picked, setPicked] = useState<string[]>([]);
   const box = useRef<HTMLTextAreaElement>(null);
   const files = useFileMention(project?.path ?? null, findFiles);

@@ -130,6 +130,23 @@ describe('PortfolioPage', () => {
   });
 });
 
+describe('PortfolioPage research', () => {
+  it('Research on a watched token asks for a chat about it', async () => {
+    const onResearch = vi.fn();
+    const api = fakeApi({ items: [usdg()], markets: [] });
+    render(
+      <PortfolioPage
+        onClose={() => {}}
+        onOpenWallet={() => {}}
+        onResearch={onResearch}
+        api={api}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Research USDG' }));
+    expect(onResearch).toHaveBeenCalledWith('USDG', USDG);
+  });
+});
+
 describe('useWatchAlerts', () => {
   it('fires an alert once, then clears it', async () => {
     vi.useFakeTimers();

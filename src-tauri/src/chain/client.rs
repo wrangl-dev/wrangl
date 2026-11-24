@@ -3,9 +3,12 @@
 //! or to CoinGecko's on-chain API when `COINGECKO_API_KEY` is set. Those values
 //! never leave this module: replies and logs name only which source answered.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::Instant;
 
 use serde_json::{json, Value};
 
@@ -280,18 +283,80 @@ async fn market_get(sources: &Sources, path: &str) -> Result<Value, String> {
     market_get_root(sources, &format!("networks/{MARKET_NETWORK}/{path}")).await
 }
 
+/// Market answers are reused for this long, so the page, the alert check and the portfolio do
+/// not each ask GeckoTerminal (about 30 requests a minute per IP).
+const MARKET_FRESH: Duration = Duration::from_secs(30);
+/// When the market API refuses (rate limit, outage), an answer this old is still shown.
+const MARKET_STALE_OK: Duration = Duration::from_secs(10 * 60);
+
+/// What [`market_cached`] keeps: path → when it was read, and the answer.
+type MarketCache = HashMap<String, (Instant, Value)>;
+
+/// `market_get_root`, through a short cache that also covers for refusals.
+pub(crate) async fn market_cached(sources: &Sources, path: &str) -> Result<Value, String> {
+    static CACHE: Mutex<Option<MarketCache>> = Mutex::new(None);
+    let cached = CACHE
+        .lock()
+        .ok()
+        .and_then(|c| c.as_ref().and_then(|m| m.get(path).cloned()));
+    if let Some((at, body)) = &cached {
+        if at.elapsed() < MARKET_FRESH {
+            return Ok(body.clone());
+        }
+    }
+    match market_get_root(sources, path).await {
+        Ok(body) => {
+            if let Ok(mut c) = CACHE.lock() {
+                let map = c.get_or_insert_with(HashMap::new);
+                map.retain(|_, (at, _)| at.elapsed() < MARKET_STALE_OK);
+                map.insert(path.to_string(), (Instant::now(), body.clone()));
+            }
+            Ok(body)
+        }
+        Err(e) => match cached {
+            Some((at, body)) if at.elapsed() < MARKET_STALE_OK => {
+                log::warn!(
+                    "[portfolio] {e}; showing data from {}s ago",
+                    at.elapsed().as_secs()
+                );
+                Ok(body)
+            }
+            _ => Err(e),
+        },
+    }
+}
+
 /// GET `path` under the market API's root (GeckoTerminal, or CoinGecko's on-chain API with a
 /// key), e.g. `simple/networks/robinhood/token_price/…`.
 pub(crate) async fn market_get_root(sources: &Sources, path: &str) -> Result<Value, String> {
     let url = format!("{}/{path}", sources.market_root);
-    let mut request = client().get(url).header("accept", "application/json");
-    if let Some(key) = &sources.market_key {
-        request = request.header("x-cg-demo-api-key", key);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("{} unreachable: {}", sources.market_label, e.without_url()))?;
+    // GeckoTerminal allows about 30 requests a minute (fewer when busy); a 429 is retried after
+    // the wait it asks for (or 5, 10, then 15 s), at most four tries in all.
+    let mut attempt = 0u64;
+    let response = loop {
+        attempt += 1;
+        let mut request = client().get(&url).header("accept", "application/json");
+        if let Some(key) = &sources.market_key {
+            request = request.header("x-cg-demo-api-key", key);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("{} unreachable: {}", sources.market_label, e.without_url()))?;
+        if response.status().as_u16() != 429 || attempt >= 4 {
+            break response;
+        }
+        let wait = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            // GeckoTerminal sends `Retry-After: 0`, which would retry straight into the limit.
+            .map_or(5 * attempt, |asked| asked.max(5 * attempt))
+            .min(20);
+        log::info!("[market] rate limited; retrying in {wait}s");
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+    };
     let status = response.status();
     if status.as_u16() == 404 {
         return Err(format!(

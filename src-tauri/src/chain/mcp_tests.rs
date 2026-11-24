@@ -15,7 +15,7 @@ async fn ask(message: Value) -> Option<Value> {
 }
 
 #[test]
-fn lists_chain_wallet_and_swap_tools() {
+fn lists_chain_wallet_swap_and_research_tools() {
     let tools = tool_specs();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
@@ -30,7 +30,19 @@ fn lists_chain_wallet_and_swap_tools() {
             "wallet_address",
             "wallet_send_transaction",
             "swap_quote",
-            "swap_tokens"
+            "swap_tokens",
+            "token_search",
+            "pools_trending",
+            "pools_top",
+            "launchpads",
+            "launches",
+            "pool_info",
+            "pool_trades",
+            "price_chart",
+            "token_profile",
+            "token_report",
+            "pons_launch",
+            "dev_launches"
         ]
     );
     for t in &tools {
@@ -66,7 +78,7 @@ async fn answers_initialize_list_and_calls() {
     let list = ask(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }))
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(10));
+    assert_eq!(list["result"]["tools"].as_array().map(Vec::len), Some(22));
 
     let ok = ask(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": { "name": "chain_status" } }))
@@ -127,7 +139,7 @@ async fn serves_newline_delimited_json_until_input_ends() {
     assert_eq!(lines[1]["error"]["code"], -32700);
     assert_eq!(
         lines[2]["result"]["tools"].as_array().map(Vec::len),
-        Some(10)
+        Some(22)
     );
 }
 

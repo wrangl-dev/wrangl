@@ -65,6 +65,17 @@ export const portfolioApi: PortfolioApi = {
     call<WatchItem[]>('watchlist_alerts', { address, above, below }),
 };
 
+/** The chat request that researches one token with the research tools. */
+export function researchPrompt(symbol: string, address: string): string {
+  return [
+    `Research ${symbol} (${address}) on Robinhood Chain.`,
+    'Run token_report first, then pool_info, pool_trades and price_chart (hour) on its main pool,',
+    'and dev_launches if it is a Pons coin. Summarise: the risk flags and why,',
+    'holders and the developer, who is buying and selling, liquidity, and the price trend.',
+    'Facts only, no advice.',
+  ].join(' ');
+}
+
 /** A watched token whose price reached one of its alerts. */
 export interface AlertHit {
   item: WatchItem;

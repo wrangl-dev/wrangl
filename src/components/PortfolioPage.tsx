@@ -67,10 +67,13 @@ function AlertEditor({
 export function PortfolioPage({
   onClose,
   onOpenWallet,
+  onResearch,
   api = portfolioApi,
 }: {
   onClose: () => void;
   onOpenWallet: () => void;
+  /** Start a chat that researches this token. */
+  onResearch?: (symbol: string, address: string) => void;
   api?: PortfolioApi;
 }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -269,7 +272,17 @@ export function PortfolioPage({
                         }
                       />
                     </td>
-                    <td>
+                    <td className="row-buttons">
+                      {onResearch && (
+                        <button
+                          type="button"
+                          className="link-button"
+                          aria-label={`Research ${item.symbol}`}
+                          onClick={() => onResearch(item.symbol, item.address)}
+                        >
+                          Research
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="link-button"

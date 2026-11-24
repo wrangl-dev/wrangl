@@ -5,6 +5,7 @@ import {
   formatPct,
   formatUsd,
   type Market,
+  researchPrompt,
   type WatchItem,
 } from './portfolio';
 
@@ -50,5 +51,21 @@ describe('portfolio helpers', () => {
     expect(formatAmount('1408.325')).toBe('1,408.325');
     expect(formatAmount('0.000001052099502507')).toBe('0.00000105');
     expect(formatAmount('0.5')).toBe('0.5');
+  });
+});
+
+describe('researchPrompt', () => {
+  it('names the token and the research tools to run', () => {
+    const p = researchPrompt('CAT', '0xabc');
+    expect(p).toContain('CAT (0xabc)');
+    for (const tool of [
+      'token_report',
+      'pool_info',
+      'pool_trades',
+      'price_chart',
+      'dev_launches',
+    ]) {
+      expect(p).toContain(tool);
+    }
   });
 });

@@ -20,9 +20,13 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::install::CommandLine;
 
-/// What a chat session tells the UI.
+/// What a chat session tells the UI. Kinds and field names are camelCase, as the UI reads them.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AgentEvent {
     /// Progress before the session is usable: `installing`, `starting`, `ready`.
     Status { state: String },

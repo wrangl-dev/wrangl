@@ -149,3 +149,24 @@ async fn no_cache_and_no_network_is_an_error() {
     let err = store.list(false).await.unwrap_err();
     assert!(err.contains("could not download"), "{err}");
 }
+
+#[test]
+fn agent_events_reach_the_ui_in_camel_case() {
+    use super::session::AgentEvent;
+    let permission = serde_json::to_value(AgentEvent::Permission {
+        request_id: "r1".into(),
+        tool_call: serde_json::json!({ "title": "Run ls" }),
+        options: serde_json::json!([]),
+    })
+    .unwrap();
+    assert_eq!(permission["kind"], "permission");
+    assert_eq!(permission["requestId"], "r1");
+    assert_eq!(permission["toolCall"]["title"], "Run ls");
+
+    let end = serde_json::to_value(AgentEvent::TurnEnd {
+        stop_reason: serde_json::json!("cancelled"),
+    })
+    .unwrap();
+    assert_eq!(end["kind"], "turnEnd");
+    assert_eq!(end["stopReason"], "cancelled");
+}

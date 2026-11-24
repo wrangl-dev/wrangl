@@ -3,6 +3,8 @@
 // - With FAKE_AUTH=1, session/new fails with auth_required until `authenticate` is called.
 // - With FAKE_AUTH=prompt, the session opens but prompts fail with auth_required until signed in.
 // - A prompt of "wait" never ends until cancelled.
+// - With FAKE_LOAD=1, the agent supports session/load: it replays one message and continues the
+//   session, except a session called "gone", which it no longer knows.
 import { createInterface } from 'node:readline';
 
 const send = (msg) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
@@ -37,7 +39,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         id: msg.id,
         result: {
           protocolVersion: 1,
-          agentCapabilities: {},
+          agentCapabilities: { loadSession: process.env.FAKE_LOAD === '1' },
           authMethods: [{ id: 'fake-login', name: 'Fake login', description: 'For tests' }],
         },
       });
@@ -52,6 +54,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         send({ id: msg.id, error: { code: -32000, message: 'Authentication required' } });
       else send({ id: msg.id, result: { sessionId: 's1' } });
       break;
+    case 'session/load': {
+      const { sessionId } = msg.params;
+      if (sessionId === 'gone') {
+        send({ id: msg.id, error: { code: -32002, message: 'Resource not found' } });
+        break;
+      }
+      update(sessionId, 'replayed');
+      send({ id: msg.id, result: {} });
+      break;
+    }
     case 'session/cancel':
       if (pendingPrompt) {
         send({ id: pendingPrompt, result: { stopReason: 'cancelled' } });
@@ -65,6 +77,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         break;
       }
       const text = prompt.map((b) => b.text ?? '').join('');
+      const links = prompt.filter((b) => b.type === 'resource_link');
+      if (links.length) {
+        update(sessionId, `links: ${links.map((b) => `${b.name} ${b.uri}`).join(', ')}`);
+        send({ id: msg.id, result: { stopReason: 'end_turn' } });
+        break;
+      }
       if (text === 'wait') {
         pendingPrompt = msg.id;
         update(sessionId, 'waiting');

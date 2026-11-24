@@ -4,6 +4,8 @@ pub mod agents;
 pub mod app_info;
 pub mod bridge;
 pub mod chain;
+pub mod files;
+pub mod history;
 pub mod paths;
 pub mod pty;
 pub mod settings;

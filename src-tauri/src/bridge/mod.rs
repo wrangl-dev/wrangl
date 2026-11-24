@@ -27,6 +27,11 @@ pub const COMMANDS: &[&str] = &[
     "pty_kill",
     "agent_list",
     "agent_start",
+    "files_search",
+    "history_list",
+    "history_load",
+    "history_save",
+    "history_delete",
     "agent_prompt",
     "agent_cancel",
     "agent_permission",
@@ -53,6 +58,7 @@ pub struct Backend {
     pub chats: AgentSessions,
     pub settings: crate::settings::SettingsStore,
     pub wallet: crate::wallet::WalletHandle,
+    pub history: crate::history::HistoryStore,
 }
 
 /// What a command did besides its answer, so a transport can clean up after its client.
@@ -111,6 +117,24 @@ struct StartArgs {
     agent_id: String,
     cwd: String,
     on_event: Value,
+    /// The agent's session id from an earlier run, to continue that conversation.
+    #[serde(default)]
+    resume: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FilesSearchArgs {
+    cwd: String,
+    #[serde(default)]
+    query: String,
+}
+
+#[derive(Deserialize)]
+struct HistoryArgs {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    record: Value,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +143,12 @@ struct ChatArgs {
     session_id: String,
     #[serde(default)]
     text: String,
+    /// The project folder, to resolve `files` in.
+    #[serde(default)]
+    cwd: Option<String>,
+    /// Project-relative paths mentioned with `@`.
+    #[serde(default)]
+    files: Vec<String>,
     #[serde(default)]
     request_id: String,
     #[serde(default)]
@@ -250,13 +280,56 @@ pub async fn dispatch(
                 }
                 Err(e) => log::warn!("[wallet] tools start without the wallet: {e}"),
             }
-            let id = backend.chats.start(line, cwd, tool_env, Arc::new(emit));
+            let id = backend
+                .chats
+                .start(line, cwd, tool_env, a.resume, Arc::new(emit));
             effects.started_chat = Some(id.clone());
             json!(id)
         }
+        "files_search" => {
+            let a: FilesSearchArgs = args(cmd, input)?;
+            let root = std::path::PathBuf::from(&a.cwd);
+            if !root.is_dir() {
+                return Err(format!("{} is not a folder", a.cwd));
+            }
+            // Walking a big folder takes a moment; keep it off the async workers.
+            let found = tokio::task::spawn_blocking(move || {
+                crate::files::search(&root, &a.query, crate::files::RESULT_LIMIT)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            json!(found)
+        }
+        "history_list" => json!(backend.history.list()?),
+        "history_load" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.load(&a.id)?
+        }
+        "history_save" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.save(&a.record)?;
+            Value::Null
+        }
+        "history_delete" => {
+            let a: HistoryArgs = args(cmd, input)?;
+            backend.history.delete(&a.id)?;
+            Value::Null
+        }
         "agent_prompt" => {
             let a: ChatArgs = args(cmd, input)?;
-            backend.chats.prompt(&a.session_id, a.text)?;
+            let mut files = vec![];
+            if !a.files.is_empty() {
+                let root = std::path::PathBuf::from(
+                    a.cwd
+                        .as_deref()
+                        .ok_or_else(|| "files need the project folder".to_string())?,
+                );
+                for rel in &a.files {
+                    let path = crate::files::resolve(&root, rel)?;
+                    files.push((rel.clone(), crate::files::file_uri(&path)?));
+                }
+            }
+            backend.chats.prompt(&a.session_id, a.text, files)?;
             Value::Null
         }
         "agent_cancel" => {

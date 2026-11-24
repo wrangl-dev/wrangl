@@ -17,6 +17,14 @@ const quietApi: ChatApi = {
   authenticate: async () => {},
   stopChat: async () => {},
   startLogin: async () => 'pty',
+  history: {
+    list: async () => [],
+    load: async () => {
+      throw new Error('nothing saved');
+    },
+    save: async () => {},
+    remove: async () => {},
+  },
 };
 
 const sidebar = () => screen.getByRole('complementary', { name: 'Projects' });

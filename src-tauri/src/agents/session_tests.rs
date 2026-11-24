@@ -28,11 +28,20 @@ fn start(
     sessions: &AgentSessions,
     line: CommandLine,
 ) -> (String, mpsc::UnboundedReceiver<AgentEvent>) {
+    start_resuming(sessions, line, None)
+}
+
+fn start_resuming(
+    sessions: &AgentSessions,
+    line: CommandLine,
+    resume: Option<&str>,
+) -> (String, mpsc::UnboundedReceiver<AgentEvent>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let id = sessions.start(
         line,
         std::env::temp_dir(),
         vec![],
+        resume.map(str::to_string),
         Arc::new(move |e| {
             let _ = tx.send(e);
         }),
@@ -82,7 +91,7 @@ async fn a_prompt_streams_asks_permission_and_ends_the_turn() {
     )
     .await;
 
-    sessions.prompt(&id, "list files".into()).unwrap();
+    sessions.prompt(&id, "list files".into(), vec![]).unwrap();
     next_matching(&mut rx, &mut seen, |e| chunk_text(e) == Some("hello")).await;
 
     let AgentEvent::Permission {
@@ -136,7 +145,7 @@ async fn refusing_permission_and_cancelling_a_turn() {
     )
     .await;
 
-    sessions.prompt(&id, "go".into()).unwrap();
+    sessions.prompt(&id, "go".into(), vec![]).unwrap();
     let AgentEvent::Permission { request_id, .. } = next_matching(&mut rx, &mut seen, |e| {
         matches!(e, AgentEvent::Permission { .. })
     })
@@ -154,7 +163,7 @@ async fn refusing_permission_and_cancelling_a_turn() {
     })
     .await;
 
-    sessions.prompt(&id, "wait".into()).unwrap();
+    sessions.prompt(&id, "wait".into(), vec![]).unwrap();
     next_matching(&mut rx, &mut seen, |e| chunk_text(e) == Some("waiting")).await;
     sessions.cancel(&id).unwrap();
     let AgentEvent::TurnEnd { stop_reason } = next_matching(&mut rx, &mut seen, |e| {
@@ -230,7 +239,7 @@ async fn sign_in_asked_by_a_prompt_then_the_next_prompt_works() {
     )
     .await;
 
-    sessions.prompt(&id, "hi".into()).unwrap();
+    sessions.prompt(&id, "hi".into(), vec![]).unwrap();
     next_matching(&mut rx, &mut seen, |e| {
         matches!(e, AgentEvent::AuthRequired { .. })
     })
@@ -243,7 +252,7 @@ async fn sign_in_asked_by_a_prompt_then_the_next_prompt_works() {
     )
     .await;
 
-    sessions.prompt(&id, "hi".into()).unwrap();
+    sessions.prompt(&id, "hi".into(), vec![]).unwrap();
     next_matching(&mut rx, &mut seen, |e| chunk_text(e) == Some("hello")).await;
     sessions.stop(&id);
 }
@@ -271,4 +280,94 @@ fn a_terminal_sign_in_runs_the_agent_with_the_method_arguments() {
         .contains("not a terminal"));
     assert!(terminal_login(&line, &methods, "nope").is_err());
     assert!(terminal_login(&line, &Value::Null, "login").is_err());
+}
+
+async fn opened_session(
+    env: &[(&str, &str)],
+    resume: Option<&str>,
+) -> Option<(String, bool, Vec<AgentEvent>)> {
+    let line = fake_agent(env)?;
+    let sessions = AgentSessions::default();
+    let (_, mut rx) = start_resuming(&sessions, line, resume);
+    let mut seen = vec![];
+    let AgentEvent::Session {
+        agent_session_id,
+        resumed,
+    } = next_matching(&mut rx, &mut seen, |e| {
+        matches!(e, AgentEvent::Session { .. })
+    })
+    .await
+    else {
+        unreachable!()
+    };
+    sessions.stop_all();
+    Some((agent_session_id, resumed, seen))
+}
+
+#[tokio::test]
+async fn a_new_chat_reports_the_agent_session_to_save() {
+    let Some((id, resumed, _)) = opened_session(&[], None).await else {
+        eprintln!("node not found; skipping");
+        return;
+    };
+    assert_eq!((id.as_str(), resumed), ("s1", false));
+}
+
+#[tokio::test]
+async fn an_agent_that_can_load_continues_the_earlier_session() {
+    let Some((id, resumed, seen)) = opened_session(&[("FAKE_LOAD", "1")], Some("old-1")).await
+    else {
+        eprintln!("node not found; skipping");
+        return;
+    };
+    assert_eq!((id.as_str(), resumed), ("old-1", true));
+    // The agent replays the conversation while loading; the UI decides what to do with it.
+    assert!(seen.iter().any(|e| chunk_text(e) == Some("replayed")));
+}
+
+#[tokio::test]
+async fn an_agent_that_cannot_load_gets_a_new_session() {
+    let Some((id, resumed, _)) = opened_session(&[], Some("old-1")).await else {
+        eprintln!("node not found; skipping");
+        return;
+    };
+    assert_eq!((id.as_str(), resumed), ("s1", false));
+}
+
+#[tokio::test]
+async fn a_session_the_agent_forgot_falls_back_to_a_new_one() {
+    let Some((id, resumed, _)) = opened_session(&[("FAKE_LOAD", "1")], Some("gone")).await else {
+        eprintln!("node not found; skipping");
+        return;
+    };
+    assert_eq!((id.as_str(), resumed), ("s1", false));
+}
+
+#[tokio::test]
+async fn mentioned_files_reach_the_agent_as_resource_links() {
+    let Some(line) = fake_agent(&[]) else {
+        eprintln!("node not found; skipping");
+        return;
+    };
+    let sessions = AgentSessions::default();
+    let (id, mut rx) = start(&sessions, line);
+    let mut seen = vec![];
+    next_matching(
+        &mut rx,
+        &mut seen,
+        |e| matches!(e, AgentEvent::Status { state } if state == "ready"),
+    )
+    .await;
+    sessions
+        .prompt(
+            &id,
+            "look at this".into(),
+            vec![("src/App.tsx".into(), "file:///work/src/App.tsx".into())],
+        )
+        .unwrap();
+    next_matching(&mut rx, &mut seen, |e| {
+        chunk_text(e) == Some("links: src/App.tsx file:///work/src/App.tsx")
+    })
+    .await;
+    sessions.stop(&id);
 }

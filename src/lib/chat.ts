@@ -1,3 +1,4 @@
+import { diffsIn, type FileDiff } from './diff';
 import { call, createChannel } from './ipc';
 import type { PtyEvent } from './pty';
 
@@ -7,6 +8,7 @@ export type AgentEvent =
   | { kind: 'authRequired'; methods: AuthMethod[]; message: string }
   | { kind: 'update'; update: SessionUpdate }
   | { kind: 'permission'; requestId: string; toolCall: ToolCallInfo; options: PermissionOption[] }
+  | { kind: 'session'; agentSessionId: string; resumed: boolean }
   | { kind: 'turnEnd'; stopReason: string }
   | { kind: 'error'; message: string }
   | { kind: 'exit'; message: string | null };
@@ -30,6 +32,8 @@ export interface ToolCallInfo {
   title?: string | null;
   kind?: string | null;
   status?: string | null;
+  /** ACP tool call content: text, diffs, terminals. Only diffs are shown. */
+  content?: unknown;
 }
 
 interface ContentBlock {
@@ -48,10 +52,10 @@ export type SessionUpdate =
   | { sessionUpdate: string };
 
 export type ChatItem =
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; files?: string[] }
   | { type: 'agent'; text: string }
   | { type: 'thought'; text: string }
-  | { type: 'tool'; id: string; title: string; kind: string; status: string }
+  | { type: 'tool'; id: string; title: string; kind: string; status: string; diffs?: FileDiff[] }
   | { type: 'plan'; entries: { content: string; status: string }[] }
   | { type: 'note'; text: string; tone: 'info' | 'error' };
 
@@ -74,7 +78,12 @@ export const initialChat: ChatState = {
   auth: null,
 };
 
-export type ChatAction = AgentEvent | { kind: 'sent'; text: string } | { kind: 'reset' };
+export type ChatAction =
+  | AgentEvent
+  | { kind: 'sent'; text: string; files?: string[] }
+  | { kind: 'reset' }
+  | { kind: 'restored'; items: ChatItem[] }
+  | { kind: 'note'; text: string; tone: 'info' | 'error' };
 
 const textOf = (c: ContentBlock | undefined) => (c?.type === 'text' ? (c.text ?? '') : '');
 
@@ -94,6 +103,7 @@ function applyUpdate(items: ChatItem[], u: SessionUpdate): ChatItem[] {
       return appendText(items, 'thought', textOf((u as { content: ContentBlock }).content));
     case 'tool_call': {
       const t = u as ToolCallInfo;
+      const diffs = diffsIn(t.content);
       return [
         ...items,
         {
@@ -102,6 +112,7 @@ function applyUpdate(items: ChatItem[], u: SessionUpdate): ChatItem[] {
           title: t.title ?? 'Tool',
           kind: t.kind ?? 'other',
           status: t.status ?? 'pending',
+          ...(diffs.length ? { diffs } : {}),
         },
       ];
     }
@@ -114,6 +125,8 @@ function applyUpdate(items: ChatItem[], u: SessionUpdate): ChatItem[] {
               title: t.title ?? item.title,
               kind: t.kind ?? item.kind,
               status: t.status ?? item.status,
+              // An update that carries content replaces it.
+              ...(t.content !== undefined ? { diffs: diffsIn(t.content) } : {}),
             }
           : item,
       );
@@ -133,8 +146,21 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.kind) {
     case 'reset':
       return initialChat;
-    case 'sent':
-      return { ...state, busy: true, items: [...state.items, { type: 'user', text: action.text }] };
+    case 'restored':
+      return { ...initialChat, items: action.items };
+    case 'note':
+      return {
+        ...state,
+        items: [...state.items, { type: 'note', text: action.text, tone: action.tone }],
+      };
+    case 'sent': {
+      const files = action.files?.length ? { files: action.files } : {};
+      return {
+        ...state,
+        busy: true,
+        items: [...state.items, { type: 'user', text: action.text, ...files }],
+      };
+    }
     case 'status':
       return { ...state, phase: action.state, auth: action.state === 'ready' ? null : state.auth };
     case 'authRequired':
@@ -188,17 +214,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
+/** Start an agent in `cwd`. `resume` is the agent's session id from an earlier run. */
 export async function startChat(
   agentId: string,
   cwd: string,
   onEvent: (event: AgentEvent) => void,
+  resume?: string,
 ): Promise<string> {
   const channel = await createChannel<AgentEvent>(onEvent);
-  return call<string>('agent_start', { agentId, cwd, onEvent: channel });
+  return call<string>('agent_start', { agentId, cwd, onEvent: channel, resume: resume ?? null });
 }
 
-export const sendPrompt = (sessionId: string, text: string) =>
-  call<void>('agent_prompt', { sessionId, text });
+/** Send a message; `files` (project-relative, mentioned with @) go to the agent as links. */
+export const sendPrompt = (sessionId: string, text: string, files: string[] = [], cwd?: string) =>
+  call<void>('agent_prompt', { sessionId, text, files, cwd: cwd ?? null });
 export const cancelTurn = (sessionId: string) => call<void>('agent_cancel', { sessionId });
 export const answerPermission = (sessionId: string, requestId: string, optionId: string | null) =>
   call<void>('agent_permission', { sessionId, requestId, optionId });

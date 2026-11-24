@@ -61,6 +61,11 @@ export function App({ store = chatStore, pickFolder }: Props) {
     setSeenPending(walletPending);
   }, [walletPending, seenPending]);
 
+  // Saved chats come back after a restart.
+  useEffect(() => {
+    void store.restore();
+  }, [store]);
+
   useEffect(() => {
     loadAppInfo()
       .then(setInfo)

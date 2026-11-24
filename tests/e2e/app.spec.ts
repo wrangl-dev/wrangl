@@ -110,6 +110,85 @@ test.describe('agents and chat', () => {
   });
 });
 
+test.describe('files', () => {
+  test('@ finds a project file and the agent gets it as a link', async ({ page }) => {
+    await openChat(page);
+    const box = page.getByRole('textbox', { name: 'Message' });
+    await box.pressSequentially('summarize @READ');
+    const menu = page.getByRole('listbox', { name: 'Files' });
+    await expect(menu.getByRole('option').first()).toContainText('README.md');
+    await box.press('Enter');
+    await expect(box).toHaveValue('summarize @README.md ');
+    await box.press('Enter');
+    await expect(page.getByLabel('Attached files')).toContainText('README.md');
+    await expect(lastAnswer(page)).toContainText('files: README.md');
+  });
+});
+
+test.describe('file changes', () => {
+  test('an edit shows its diff before it is allowed and stays under the tool call', async ({
+    page,
+  }) => {
+    await openChat(page);
+    await send(page, '/edit');
+    const card = page.getByRole('group', { name: 'Permission request' });
+    const before = card.getByLabel('File changes');
+    await expect(before).toContainText('README.md');
+    await expect(before).toContainText('+2');
+    await expect(before.locator('tr[data-kind="add"]').last()).toContainText(
+      'Sells tokenized goods.',
+    );
+    await card.getByRole('button', { name: 'Allow once' }).click();
+
+    await expect(lastAnswer(page)).toContainText('README updated');
+    const after = page.locator('.thread > .diffs').last();
+    await expect(after).toContainText('README.md');
+    await after.locator('summary').click();
+    await expect(after.locator('tr[data-kind="add"]').last()).toContainText(
+      'Sells tokenized goods.',
+    );
+  });
+});
+
+test.describe('saved chats', () => {
+  test('a chat comes back after a reload and continues the agent session', async ({ page }) => {
+    await openChat(page);
+    const word = `kept-${Date.now()}`;
+    await send(page, word);
+    await expect(lastAnswer(page)).toContainText(word);
+    // Saves settle shortly after the answer.
+    await page.waitForTimeout(800);
+
+    await page.reload();
+    const chats = page.getByRole('list', { name: 'Chats in storefront' });
+    await chats.getByRole('button', { name: word }).click();
+    await expect(page.locator('.msg-user').first()).toHaveText(word);
+    await expect(lastAnswer(page)).toContainText(word);
+
+    await send(page, 'after reload');
+    await expect(lastAnswer(page)).toContainText('after reload');
+    // The agent's replay of the loaded session is not shown twice, and it was resumed.
+    await expect(page.getByText('replayed earlier answer')).toHaveCount(0);
+    await expect(page.getByText('does not remember')).toHaveCount(0);
+  });
+
+  test('a deleted chat stays deleted after a reload', async ({ page }) => {
+    await openChat(page);
+    const word = `gone-${Date.now()}`;
+    await send(page, word);
+    await expect(lastAnswer(page)).toContainText(word);
+    const chats = page.getByRole('list', { name: 'Chats in storefront' });
+    const row = chats.getByRole('listitem').filter({ hasText: word });
+    await row.hover();
+    await row.getByRole('button', { name: `Close chat ${word}` }).click();
+    await expect(row).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.getByRole('complementary', { name: 'Projects' })).toContainText('storefront');
+    await expect(chats.getByRole('listitem').filter({ hasText: word })).toHaveCount(0);
+  });
+});
+
 test.describe('terminals', () => {
   test('Ctrl+` opens a terminal in the project', async ({ page }) => {
     await openChat(page);
@@ -117,6 +196,8 @@ test.describe('terminals', () => {
     const terminals = page.getByRole('region', { name: 'Terminal' });
     await expect(terminals).toBeVisible();
     await expect(terminals.locator('.xterm')).toBeVisible();
+    // Wait for the shell's prompt, so no keystroke is lost while it starts.
+    await expect(terminals.locator('.xterm-rows')).toContainText(/[>$%#]\s*$/, { timeout: 15_000 });
     await page.keyboard.type('echo wrangl-e2e-$((40+2))');
     await page.keyboard.press('Enter');
     await expect(terminals.locator('.xterm-rows')).toContainText(/wrangl-e2e-42|wrangl-e2e-\$/);

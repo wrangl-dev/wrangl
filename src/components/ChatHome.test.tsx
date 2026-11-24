@@ -54,10 +54,24 @@ vi.mock('../lib/chat', async (orig) => ({
 const project = { id: 'p', name: 'storefront', path: '/work/storefront' };
 
 /** ChatHome plus the parent's job: remember which chat was created. */
-function Harness({ project: p }: { project: Project | null }) {
+function Harness({
+  project: p,
+  findFiles,
+}: {
+  project: Project | null;
+  findFiles?: (cwd: string, query: string) => Promise<string[]>;
+}) {
   const [store] = useState(() => new ChatStore());
   const [chatId, setChatId] = useState<string | null>(null);
-  return <ChatHome project={p} chatId={chatId} onChatCreated={setChatId} store={store} />;
+  return (
+    <ChatHome
+      project={p}
+      chatId={chatId}
+      onChatCreated={setChatId}
+      store={store}
+      findFiles={findFiles}
+    />
+  );
 }
 
 describe('ChatHome', () => {
@@ -76,7 +90,7 @@ describe('ChatHome', () => {
     expect(await screen.findByText('Check a token', { selector: '.msg-user' })).toBeInTheDocument();
     await vi.waitFor(() => expect(calls.map((c) => c.cmd)).toEqual(['start', 'prompt']));
     expect(calls[0].args).toEqual(['fake', '/work/storefront']);
-    expect(calls[1].args).toEqual(['session-1', 'Check a token']);
+    expect(calls[1].args).toEqual(['session-1', 'Check a token', [], '/work/storefront']);
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
 
     act(() => {
@@ -128,6 +142,36 @@ describe('ChatHome', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
     await vi.waitFor(() => expect(calls.some((c) => c.cmd === 'cancel')).toBe(true));
+  });
+
+  it('@ opens a file menu; the picked file goes with the message', async () => {
+    const findFiles = vi.fn(async (_cwd: string, query: string) =>
+      ['src/App.tsx', 'src/lib/app-info.ts'].filter((f) => f.toLowerCase().includes(query)),
+    );
+    render(<Harness project={project} findFiles={findFiles} />);
+    await screen.findByRole('button', { name: /Fake Agent/ });
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+
+    fireEvent.change(box, { target: { value: 'read @app', selectionStart: 9 } });
+    const menu = await screen.findByRole('listbox', { name: 'Files' });
+    expect(findFiles).toHaveBeenLastCalledWith('/work/storefront', 'app');
+    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(2);
+
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(box.value).toBe('read @src/lib/app-info.ts ');
+    expect(screen.queryByRole('listbox', { name: 'Files' })).toBeNull();
+
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === 'prompt')?.args).toEqual([
+        'session-1',
+        'read @src/lib/app-info.ts',
+        ['src/lib/app-info.ts'],
+        '/work/storefront',
+      ]),
+    );
+    expect(await screen.findByLabelText('Attached files')).toHaveTextContent('app-info.ts');
   });
 
   it('cannot send without a project', async () => {

@@ -1535,3 +1535,11 @@ button:disabled {
   line-height: 1;
   cursor: pointer;
 }
+
+.row-buttons {
+  white-space: nowrap;
+}
+
+.row-buttons .link-button + .link-button {
+  margin-left: 10px;
+}

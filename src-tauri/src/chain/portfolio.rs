@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::client::{market_get_root, rpc_batch, Sources};
+use super::client::{market_cached as cached_market, rpc_batch, Sources};
 use super::tools::{
     call_with_address, decode_string, decode_u64, format_units, hex_to_decimal, parse_address,
     MARKET_NETWORK, SEL_BALANCE_OF, SEL_DECIMALS, SEL_NAME, SEL_SYMBOL,
@@ -240,49 +240,6 @@ pub fn assemble(
         change24h_usd,
         tokens_checked,
         rpc,
-    }
-}
-
-/// Market answers are reused for this long, so the page, the alert check and the portfolio do
-/// not each ask GeckoTerminal (about 30 requests a minute per IP).
-const MARKET_FRESH: Duration = Duration::from_secs(30);
-/// When the market API refuses (rate limit, outage), an answer this old is still shown.
-const MARKET_STALE_OK: Duration = Duration::from_secs(10 * 60);
-
-/// What [`cached_market`] keeps: path → when it was read, and the answer.
-type MarketCache = HashMap<String, (Instant, Value)>;
-
-/// `market_get_root`, through a short cache that also covers for refusals.
-async fn cached_market(sources: &Sources, path: &str) -> Result<Value, String> {
-    static CACHE: Mutex<Option<MarketCache>> = Mutex::new(None);
-    let cached = CACHE
-        .lock()
-        .ok()
-        .and_then(|c| c.as_ref().and_then(|m| m.get(path).cloned()));
-    if let Some((at, body)) = &cached {
-        if at.elapsed() < MARKET_FRESH {
-            return Ok(body.clone());
-        }
-    }
-    match market_get_root(sources, path).await {
-        Ok(body) => {
-            if let Ok(mut c) = CACHE.lock() {
-                let map = c.get_or_insert_with(HashMap::new);
-                map.retain(|_, (at, _)| at.elapsed() < MARKET_STALE_OK);
-                map.insert(path.to_string(), (Instant::now(), body.clone()));
-            }
-            Ok(body)
-        }
-        Err(e) => match cached {
-            Some((at, body)) if at.elapsed() < MARKET_STALE_OK => {
-                log::warn!(
-                    "[portfolio] {e}; showing data from {}s ago",
-                    at.elapsed().as_secs()
-                );
-                Ok(body)
-            }
-            _ => Err(e),
-        },
     }
 }
 

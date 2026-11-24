@@ -10,6 +10,7 @@ import { WalletPage } from './components/WalletPage';
 import { type AppInfo, BROWSER_APP_INFO, loadAppInfo } from './lib/app-info';
 import { type ChatStore, chatStore, useChatStore } from './lib/chat-store';
 import { folderPicker } from './lib/folders';
+import { researchPrompt } from './lib/portfolio';
 import {
   addProject,
   loadProjects,
@@ -52,6 +53,8 @@ export function App({ store = chatStore, pickFolder }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const [portfolioOpen, setPortfolioOpen] = useState(false);
+  // A request to put in a new chat's composer, and a counter so the same one can be sent again.
+  const [seed, setSeed] = useState<{ text: string; n: number }>({ text: '', n: 0 });
   const alerts = useWatchAlerts();
   const wallet = useWalletStatus(5000);
   const walletPending = wallet.snapshot?.requests.length ?? 0;
@@ -178,7 +181,8 @@ export function App({ store = chatStore, pickFolder }: Props) {
       <main className="workspace">
         <ChatHome
           // A fresh composer per project and chat.
-          key={`${active?.id ?? 'none'}:${activeChatId ?? 'new'}`}
+          key={`${active?.id ?? 'none'}:${activeChatId ?? 'new'}:${seed.n}`}
+          initialDraft={activeChatId ? '' : seed.text}
           project={active}
           chatId={activeChatId}
           onChatCreated={(id) => active && selectChat(active.id, id)}
@@ -190,6 +194,11 @@ export function App({ store = chatStore, pickFolder }: Props) {
         {portfolioOpen && (
           <PortfolioPage
             onClose={() => setPortfolioOpen(false)}
+            onResearch={(symbol, address) => {
+              setPortfolioOpen(false);
+              if (active) selectChat(active.id, null);
+              setSeed((s) => ({ text: researchPrompt(symbol, address), n: s.n + 1 }));
+            }}
             onOpenWallet={() => {
               setPortfolioOpen(false);
               setWalletOpen(true);

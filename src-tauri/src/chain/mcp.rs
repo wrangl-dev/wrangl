@@ -39,6 +39,7 @@ pub enum Tool {
     Chain(ChainTool),
     Wallet(WalletTool),
     Swap(SwapTool),
+    Research(super::research::ResearchTool),
 }
 
 /// The swap tools.
@@ -67,6 +68,7 @@ impl Tool {
             Self::Chain(t) => t.name(),
             Self::Wallet(t) => t.name(),
             Self::Swap(t) => t.name(),
+            Self::Research(t) => t.name(),
         }
     }
 }
@@ -153,6 +155,15 @@ fn swap_spec(tool: SwapTool) -> Value {
     })
 }
 
+fn research_spec(tool: super::research::ResearchTool) -> Value {
+    json!({
+        "name": tool.name(),
+        "description": tool.description(),
+        "inputSchema": super::research::input_schema(tool),
+        "annotations": { "readOnlyHint": true, "openWorldHint": true },
+    })
+}
+
 /// Every tool this server lists.
 #[must_use]
 pub fn tool_specs() -> Vec<Value> {
@@ -160,6 +171,7 @@ pub fn tool_specs() -> Vec<Value> {
         .map(tool_spec)
         .chain(WALLET.into_iter().map(wallet_spec))
         .chain(SWAP.into_iter().map(swap_spec))
+        .chain(super::research::ALL.into_iter().map(research_spec))
         .collect()
 }
 
@@ -168,6 +180,7 @@ fn tool_named(name: &str) -> Option<Tool> {
         .map(Tool::Chain)
         .chain(WALLET.into_iter().map(Tool::Wallet))
         .chain(SWAP.into_iter().map(Tool::Swap))
+        .chain(super::research::ALL.into_iter().map(Tool::Research))
         .find(|t| t.name() == name)
 }
 
@@ -248,6 +261,7 @@ where
                             Tool::Chain(t) => client::run(sources, t, args).await,
                             Tool::Wallet(t) => wallet.run(t, args).await,
                             Tool::Swap(t) => run_swap(sources, wallet, t, args).await,
+                            Tool::Research(t) => super::research::run(sources, t, args).await,
                         }
                     }
                 })

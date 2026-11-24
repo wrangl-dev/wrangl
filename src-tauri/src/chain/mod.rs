@@ -3,6 +3,7 @@
 pub mod client;
 pub mod mcp;
 pub mod portfolio;
+pub mod research;
 pub mod swap;
 pub mod tools;
 
@@ -12,6 +13,8 @@ mod client_tests;
 mod mcp_tests;
 #[cfg(test)]
 mod portfolio_tests;
+#[cfg(test)]
+mod research_tests;
 #[cfg(test)]
 mod swap_tests;
 #[cfg(test)]

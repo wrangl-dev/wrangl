@@ -147,7 +147,7 @@ async fn serves_newline_delimited_json_until_input_ends() {
 fn settings_choose_the_sources() {
     assert_eq!(Sources::public().rpc_label(), "public");
     let own = Sources::from_settings(Some(" https://rpc.example/key "), Some("cg-key"));
-    assert_eq!(own.rpc_label(), "your ROBINHOOD_RPC_URL");
+    assert_eq!(own.rpc_label(), "your own RPC (Settings)");
     let junk = Sources::from_settings(Some("not a url"), Some("  "));
     assert_eq!(junk.rpc_label(), "public");
 }

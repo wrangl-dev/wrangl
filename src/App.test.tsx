@@ -115,9 +115,40 @@ describe('App', () => {
     fireEvent.click(within(sidebar()).getByRole('button', { name: 'a' }));
     expect(screen.getByLabelText('Chat title')).toHaveTextContent('Audit the token contract');
 
-    // "New chat" in a project shows the start screen for that project.
+    // "New chat" in a project shows the start screen for that project, and the new chat is
+    // listed in the folder right away.
     fireEvent.click(within(sidebar()).getByRole('button', { name: 'New chat in b' }));
     expect(screen.getByRole('heading', { name: 'What should we do in b?' })).toBeInTheDocument();
+    expect(within(inB).getByText('New chat')).toBeInTheDocument();
+    expect(within(inA).queryByText('New chat')).toBeNull();
+  });
+
+  it('going to a chat or a project closes Wallet, Settings and Portfolio', async () => {
+    const { store } = renderWithFolders(['/srv/a']);
+    await addAll(1);
+    const [a] = loadProjects();
+    await act(async () => {
+      const chat = store.create(a.id, 'claude', 'Claude');
+      await store.send(chat, 'Audit the token contract', a.path);
+    });
+    const chats = within(sidebar()).getByRole('list', { name: 'Chats in a' });
+
+    for (const page of ['Wallet', 'Settings', 'Portfolio']) {
+      fireEvent.click(within(sidebar()).getByRole('button', { name: new RegExp(`^${page}$`) }));
+      expect(screen.getByRole('region', { name: page })).toBeInTheDocument();
+      fireEvent.click(within(chats).getByText('Audit the token contract'));
+      expect(screen.queryByRole('region', { name: page })).toBeNull();
+      expect(screen.getByLabelText('Chat title')).toHaveTextContent('Audit the token contract');
+    }
+
+    fireEvent.click(within(sidebar()).getByRole('button', { name: /^Settings$/ }));
+    fireEvent.click(within(sidebar()).getByRole('button', { name: 'New chat in a' }));
+    expect(screen.queryByRole('region', { name: 'Settings' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'What should we do in a?' })).toBeInTheDocument();
+
+    fireEvent.click(within(sidebar()).getByRole('button', { name: /^Wallet$/ }));
+    fireEvent.click(within(sidebar()).getByRole('button', { name: 'a' }));
+    expect(screen.queryByRole('region', { name: 'Wallet' })).toBeNull();
   });
 
   it('closing a chat or removing a project stops its agents', async () => {

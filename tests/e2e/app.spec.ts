@@ -248,6 +248,10 @@ test.describe('portfolio', () => {
 });
 
 test.describe('Robinhood Chain @network', () => {
+  // GeckoTerminal rate-limits busy IPs (CI runners included); the tools wait out a 429 for
+  // 5–15 s per request, so these tests get room for that.
+  test.describe.configure({ timeout: 180_000 });
+
   test('the watchlist reads a token, keeps its alert, and lets it go', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Portfolio', exact: true }).click();
@@ -295,11 +299,11 @@ test.describe('Robinhood Chain @network', () => {
     await openChat(page);
     await send(page, '/tool launches {"launchpad":"pons-v2"}');
     await expect(page.locator('.msg-tool').last()).toHaveAttribute('data-status', 'completed', {
-      timeout: 60_000,
+      timeout: 150_000,
     });
     await expect(lastAnswer(page)).toContainText('pons-v2');
     await send(page, `/tool token_profile {"token":"${USDG}"}`);
-    await expect(lastAnswer(page)).toContainText(/holders/, { timeout: 60_000 });
+    await expect(lastAnswer(page)).toContainText(/holders/, { timeout: 150_000 });
   });
 
   test('Research on a watched token opens a chat with the request', async ({ page }) => {
@@ -308,7 +312,7 @@ test.describe('Robinhood Chain @network', () => {
     const portfolio = page.getByRole('region', { name: 'Portfolio' });
     await portfolio.getByRole('textbox', { name: 'Token address' }).fill(USDG);
     await portfolio.getByRole('button', { name: 'Watch' }).click();
-    await portfolio.getByRole('button', { name: 'Research USDG' }).click({ timeout: 40_000 });
+    await portfolio.getByRole('button', { name: 'Research USDG' }).click({ timeout: 150_000 });
     const box = page.getByRole('textbox', { name: 'Message' });
     await expect(box).toHaveValue(/Research USDG \(0x5fc5/);
     await expect(box).toHaveValue(/token_report/);

@@ -30,6 +30,8 @@ const SEL_BALANCE_OF: &str = "70a08231";
 const TOP10_WARN_PCT: f64 = 50.0;
 const MC_OVER_LIQUIDITY_WARN: f64 = 100.0;
 const DEV_LAUNCHES_WARN: usize = 2;
+/// How long token_report waits for market data before reporting without it.
+const MARKET_BUDGET: std::time::Duration = std::time::Duration::from_secs(25);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResearchTool {
@@ -139,12 +141,14 @@ pub struct LaunchesInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PoolInput {
     /// The pool address (0x and 40 hex characters, or a 64-hex Uniswap v4 pool id).
+    #[serde(alias = "address", alias = "pool_address")]
     pub pool: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TradesInput {
     /// The pool address.
+    #[serde(alias = "address", alias = "pool_address")]
     pub pool: String,
     /// Only this wallet's trades.
     #[serde(default)]
@@ -157,6 +161,7 @@ pub struct TradesInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ChartInput {
     /// The pool address.
+    #[serde(alias = "address", alias = "pool_address")]
     pub pool: String,
     /// "minute", "hour" (default) or "day".
     #[serde(default)]
@@ -169,12 +174,14 @@ pub struct ChartInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TokenInput {
     /// The token contract address.
+    #[serde(alias = "address", alias = "token_address")]
     pub token: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DevInput {
     /// The creator's wallet address.
+    #[serde(alias = "address", alias = "creator")]
     pub wallet: String,
 }
 
@@ -582,6 +589,8 @@ pub fn risk_flags(r: &RiskInputs) -> Vec<Value> {
         );
     }
     let p = &r.profile;
+    // A profile that could not be read is not a token without pools or socials.
+    let market_missing = !p["error"].is_null();
     if p["honeypot"] == json!(true) || p["honeypot"] == json!("yes") {
         flag(
             "warn",
@@ -654,6 +663,12 @@ pub fn risk_flags(r: &RiskInputs) -> Vec<Value> {
                 "many buys and no sells in 24h: selling may be blocked".into(),
             );
         }
+    } else if market_missing {
+        flag(
+            "info",
+            "market data missing",
+            "the market API did not answer, so pools, holders and socials are not checked".into(),
+        );
     } else {
         flag(
             "warn",
@@ -666,7 +681,8 @@ pub fn risk_flags(r: &RiskInputs) -> Vec<Value> {
             flag("info", "burned", format!("{b:.1}% of supply is burned"));
         }
     }
-    if p["twitter"].is_null()
+    if !market_missing
+        && p["twitter"].is_null()
         && p["telegram"].is_null()
         && p["websites"].as_array().is_none_or(Vec::is_empty)
     {
@@ -901,44 +917,84 @@ async fn token_profile(sources: &Sources, token: &str) -> Result<Value, String> 
     Ok(out)
 }
 
+/// A token worth searching Pons launch history for: one of its pools is on a Pons DEX, or
+/// GeckoTerminal knows it from a launchpad.
+#[must_use]
+pub fn looks_like_pons(profile: &Value) -> bool {
+    let on_pons = profile["pools"].as_array().is_some_and(|pools| {
+        pools
+            .iter()
+            .any(|p| p["dex"].as_str().is_some_and(|d| d.contains("pons")))
+    });
+    on_pons || !profile["launchpad"].is_null()
+}
+
 async fn token_report(sources: &Sources, token: &str) -> Result<Value, String> {
     let token = parse_address(token)?.to_lowercase();
-    let contract = super::client::run(
-        sources,
-        super::tools::ChainTool::Token,
-        json!({ "address": token, "market": false }),
-    )
-    .await
-    .unwrap_or_else(|e| json!({ "error": e }));
-    let profile = token_profile(sources, &token)
+    // The chain reads (RPC) and the market reads (GeckoTerminal, one after another because of
+    // its rate limit) run side by side, so an agent gets the report well before it gives up.
+    let chain = async {
+        let contract = super::client::run(
+            sources,
+            super::tools::ChainTool::Token,
+            json!({ "address": token, "market": false }),
+        )
         .await
         .unwrap_or_else(|e| json!({ "error": e }));
-    let main_pool = profile["pools"].as_array().and_then(|p| p.first()).cloned();
-    let burned_pct = erc20_amounts(
-        sources,
-        &token,
-        &[DEAD, "0x0000000000000000000000000000000000000000"],
-    )
-    .await
-    .ok()
-    .filter(|(s, _)| *s > 0.0)
-    .map(|(supply, held)| round(held.iter().sum::<f64>() / supply * 100.0, 2));
-    let activity = match main_pool.as_ref().and_then(|p| p["pool"].as_str()) {
-        Some(pool) => market_cached(sources, &market(&format!("pools/{pool}/trades")))
-            .await
-            .map(|b| {
-                let s = trades_summary(&b, None, None);
-                json!({ "trades": s["trades"], "buys": s["buys"], "sells": s["sells"],
-                        "buy_usd": s["buy_usd"], "sell_usd": s["sell_usd"],
-                        "unique_wallets": s["unique_wallets"], "top_sellers": s["top_sellers"] })
-            })
-            .ok(),
-        None => None,
-    };
-    let pons = pons_launch(sources, &token)
+        let burned_pct = erc20_amounts(
+            sources,
+            &token,
+            &[DEAD, "0x0000000000000000000000000000000000000000"],
+        )
         .await
         .ok()
-        .filter(|p| p["pons"] == json!(true));
+        .filter(|(s, _)| *s > 0.0)
+        .map(|(supply, held)| round(held.iter().sum::<f64>() / supply * 100.0, 2));
+        (contract, burned_pct)
+    };
+    let market_side = async {
+        let profile = token_profile(sources, &token)
+            .await
+            .unwrap_or_else(|e| json!({ "error": e }));
+        let main_pool = profile["pools"].as_array().and_then(|p| p.first()).cloned();
+        let activity = match main_pool.as_ref().and_then(|p| p["pool"].as_str()) {
+            Some(pool) => market_cached(sources, &market(&format!("pools/{pool}/trades")))
+                .await
+                .map(|b| {
+                    let s = trades_summary(&b, None, None);
+                    json!({ "trades": s["trades"], "buys": s["buys"], "sells": s["sells"],
+                            "buy_usd": s["buy_usd"], "sell_usd": s["sell_usd"],
+                            "unique_wallets": s["unique_wallets"], "top_sellers": s["top_sellers"] })
+                })
+                .ok(),
+            None => None,
+        };
+        (profile, main_pool, activity)
+    };
+    // An agent gives up on a tool after a while: when the market API keeps refusing, report the
+    // chain facts in time and say the market part is missing.
+    let market_side = async {
+        tokio::time::timeout(MARKET_BUDGET, market_side)
+            .await
+            .unwrap_or_else(|_| {
+                (
+                    json!({ "error": "market data (GeckoTerminal) is rate limited right now; try token_profile again in a minute, or add a CoinGecko key in Settings" }),
+                    None,
+                    None,
+                )
+            })
+    };
+    let ((contract, burned_pct), (profile, main_pool, activity)) = tokio::join!(chain, market_side);
+    // Launch history is a slow log search: only for tokens that trade on Pons or came from a
+    // launchpad.
+    let pons = if looks_like_pons(&profile) {
+        pons_launch(sources, &token)
+            .await
+            .ok()
+            .filter(|p| p["pons"] == json!(true))
+    } else {
+        None
+    };
     let dev = pons
         .as_ref()
         .and_then(|p| p["creator"].as_str().map(str::to_string))
@@ -962,8 +1018,9 @@ async fn token_report(sources: &Sources, token: &str) -> Result<Value, String> {
     });
     Ok(json!({
         "token": token,
-        "symbol": profile["symbol"],
-        "name": profile["name"],
+        // From the market profile, or the contract itself when the market API did not answer.
+        "symbol": if profile["symbol"].is_null() { &contract["symbol"] } else { &profile["symbol"] },
+        "name": if profile["name"].is_null() { &contract["name"] } else { &profile["name"] },
         "flags": flags,
         "contract": contract,
         "burned_pct": burned_pct,

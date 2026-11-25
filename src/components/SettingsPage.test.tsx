@@ -25,7 +25,7 @@ function fakeApi(start: SettingsView) {
     testRpc: vi.fn(async (url?: string) => {
       if (!url) throw new Error('RPC (public) unreachable: error sending request');
       return {
-        rpc: 'your ROBINHOOD_RPC_URL',
+        rpc: 'your own RPC (Settings)',
         chain_id: 4663,
         latest_block: 1234567,
         gas_price_gwei: '0.01',

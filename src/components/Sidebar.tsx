@@ -152,10 +152,18 @@ export function Sidebar({
                 </button>
                 <button
                   type="button"
-                  className="icon-button row-action"
+                  className="icon-button row-action new-chat"
                   aria-label={`New chat in ${p.name}`}
                   title="New chat"
-                  onClick={() => onSelectChat(p.id, null)}
+                  onClick={() => {
+                    // Show the folder's chats, where the new one appears.
+                    setCollapsed((c) => {
+                      const next = new Set(c);
+                      next.delete(p.id);
+                      return next;
+                    });
+                    onSelectChat(p.id, null);
+                  }}
                 >
                   <Icon name="plus" size={12} />
                 </button>
@@ -170,8 +178,16 @@ export function Sidebar({
                 </button>
               </div>
 
-              {open && chats.length > 0 && (
+              {open && (chats.length > 0 || (isActive && activeChatId === null)) && (
                 <ul className="chat-list" aria-label={`Chats in ${p.name}`}>
+                  {isActive && activeChatId === null && (
+                    // The chat being started: it gets its title from the first message.
+                    <li data-active="true" className="chat-draft">
+                      <span className="chat-button" aria-current="true">
+                        <span className="chat-title">New chat</span>
+                      </span>
+                    </li>
+                  )}
                   {chats.map((c) => (
                     <li key={c.id} data-active={isActive && c.id === activeChatId}>
                       <button

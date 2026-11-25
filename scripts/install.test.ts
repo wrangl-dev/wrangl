@@ -46,7 +46,8 @@ function runSh(os: string, arch: string) {
   });
 }
 
-describe.skipIf(!hasBash)('install.sh', () => {
+// Each case starts real bash processes, which can take seconds on a busy Windows machine.
+describe.skipIf(!hasBash)('install.sh', { timeout: 30_000 }, () => {
   it('picks the Apple Silicon and Intel disk images', () => {
     expect(runSh('Darwin', 'arm64').stdout.trim()).toBe(`${base}/Wrangl_0.2.0_aarch64.dmg`);
     expect(runSh('Darwin', 'x86_64').stdout.trim()).toBe(`${base}/Wrangl_0.2.0_x64.dmg`);

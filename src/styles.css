@@ -949,6 +949,8 @@ button:disabled {
   height: 22px;
 }
 
+/* New chat is always there on the active project, so starting a chat in a folder is obvious. */
+.project[data-active="true"] .new-chat,
 .project-row:hover .row-action,
 .project-row:focus-within .row-action,
 .chat-list li:hover .row-action,
@@ -1542,4 +1544,10 @@ button:disabled {
 
 .row-buttons .link-button + .link-button {
   margin-left: 10px;
+}
+
+/* The chat being started, before its first message gives it a title. */
+.chat-draft .chat-title {
+  font-style: italic;
+  color: var(--dim);
 }

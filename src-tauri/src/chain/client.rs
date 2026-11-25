@@ -112,7 +112,7 @@ impl Sources {
             // The user's own RPC only: no silent switch to someone else's.
             sources.endpoints = vec![Endpoint {
                 url: url.to_string(),
-                label: "your ROBINHOOD_RPC_URL",
+                label: "your own RPC (Settings)",
             }];
             sources.current = AtomicUsize::new(0);
             sources.public = false;
@@ -120,7 +120,7 @@ impl Sources {
         if let Some(key) = coingecko_key.map(str::trim).filter(|k| !k.is_empty()) {
             sources.market_root = COINGECKO_ONCHAIN_API;
             sources.market_key = Some(key.to_string());
-            sources.market_label = "coingecko (your COINGECKO_API_KEY)";
+            sources.market_label = "coingecko (your key from Settings)";
         }
         sources
     }
@@ -328,6 +328,25 @@ pub(crate) async fn market_cached(sources: &Sources, path: &str) -> Result<Value
 
 /// GET `path` under the market API's root (GeckoTerminal, or CoinGecko's on-chain API with a
 /// key), e.g. `simple/networks/robinhood/token_price/…`.
+/// Keyless GeckoTerminal refuses bursts: requests from this process go out at least this far
+/// apart (Legitscan found 2.3 s keeps it from answering 429 at all).
+const KEYLESS_MARKET_GAP: Duration = Duration::from_millis(2200);
+
+/// Wait for this process's next turn at the keyless market API.
+async fn keyless_market_turn() {
+    static NEXT: Mutex<Option<Instant>> = Mutex::new(None);
+    let wait = {
+        let Ok(mut next) = NEXT.lock() else { return };
+        let now = Instant::now();
+        let at = next.map_or(now, |n| n.max(now));
+        *next = Some(at + KEYLESS_MARKET_GAP);
+        at.saturating_duration_since(now)
+    };
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
+}
+
 pub(crate) async fn market_get_root(sources: &Sources, path: &str) -> Result<Value, String> {
     let url = format!("{}/{path}", sources.market_root);
     // GeckoTerminal allows about 30 requests a minute (fewer when busy); a 429 is retried after
@@ -335,6 +354,9 @@ pub(crate) async fn market_get_root(sources: &Sources, path: &str) -> Result<Val
     let mut attempt = 0u64;
     let response = loop {
         attempt += 1;
+        if sources.market_key.is_none() {
+            keyless_market_turn().await;
+        }
         let mut request = client().get(&url).header("accept", "application/json");
         if let Some(key) = &sources.market_key {
             request = request.header("x-cg-demo-api-key", key);

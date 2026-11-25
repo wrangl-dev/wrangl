@@ -128,9 +128,22 @@ export function App({ store = chatStore, pickFolder }: Props) {
     [projects, activeId, store],
   );
 
+  // Wallet, Settings and Portfolio cover the chat: going to a chat or project closes them.
+  const closePages = () => {
+    setSettingsOpen(false);
+    setWalletOpen(false);
+    setPortfolioOpen(false);
+  };
+
   const selectChat = (projectId: string, chatId: string | null) => {
+    closePages();
     setActiveId(projectId);
     setOpenChat((m) => ({ ...m, [projectId]: chatId }));
+  };
+
+  const selectProject = (projectId: string) => {
+    closePages();
+    setActiveId(projectId);
   };
 
   const removeChat = (chatId: string) => {
@@ -151,7 +164,7 @@ export function App({ store = chatStore, pickFolder }: Props) {
         activeChatId={activeChatId}
         chatsOf={(id) => store.list(id)}
         isBusy={(id) => store.busy(id)}
-        onSelect={setActiveId}
+        onSelect={selectProject}
         onSelectChat={selectChat}
         onRemoveChat={removeChat}
         pickFolder={picker}

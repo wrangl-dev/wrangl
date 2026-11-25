@@ -178,6 +178,55 @@ fn on_a_pons_curve_concentration_is_only_information() {
 }
 
 #[test]
+fn missing_market_data_is_not_reported_as_a_token_without_pools() {
+    let flags = risk_flags(&RiskInputs {
+        contract: json!({}),
+        profile: json!({ "error": "market data is rate limited" }),
+        main_pool: None,
+        burned_pct: None,
+        dev_launches: None,
+        on_curve: false,
+    });
+    let names: Vec<&str> = flags.iter().map(|f| f["flag"].as_str().unwrap()).collect();
+    assert_eq!(names, ["market data missing"]);
+}
+
+#[tokio::test]
+async fn common_argument_names_are_accepted() {
+    // Agents often say `address` where a tool asks for `token`, `pool` or `wallet`; a bad
+    // address then fails on the address, not on the field name.
+    let sources = super::client::Sources::with_endpoints(vec![]);
+    for (tool, args) in [
+        (ResearchTool::TokenReport, json!({ "address": "nope" })),
+        (
+            ResearchTool::TokenProfile,
+            json!({ "token_address": "nope" }),
+        ),
+        (ResearchTool::PoolInfo, json!({ "pool_address": "nope" })),
+        (ResearchTool::PoolTrades, json!({ "address": "nope" })),
+        (ResearchTool::PriceChart, json!({ "address": "nope" })),
+        (ResearchTool::DevLaunches, json!({ "creator": "nope" })),
+    ] {
+        let err = run(&sources, tool, args).await.unwrap_err();
+        assert!(!err.contains("missing field"), "{}: {err}", tool.name());
+    }
+}
+
+#[test]
+fn only_pons_or_launchpad_tokens_get_a_launch_search() {
+    assert!(looks_like_pons(
+        &json!({ "pools": [{ "dex": "uniswap-v3-robinhood" }, { "dex": "pons-v2" }] })
+    ));
+    assert!(looks_like_pons(
+        &json!({ "pools": [], "launchpad": { "completed": false } })
+    ));
+    assert!(!looks_like_pons(
+        &json!({ "pools": [{ "dex": "uniswap-v3-robinhood" }], "launchpad": null })
+    ));
+    assert!(!looks_like_pons(&json!({ "error": "no data" })));
+}
+
+#[test]
 fn a_pons_curve_fills_as_supply_leaves_the_pool() {
     assert_eq!(curve_progress(1000.0, 1000.0)["filled_pct"], 0.0);
     // Half the supply left in the curve: (1/0.5 - 1) / 2.5 = 40%.
@@ -303,5 +352,45 @@ async fn live_fresh_pons_report() {
     eprintln!(
         "holders: {} top10: {} pool liq: {}",
         r["profile"]["holders"], r["profile"]["top10_pct"], r["main_pool"]["liquidity_usd"]
+    );
+}
+
+/// Where token_report's time goes: `cargo test -- --ignored live_timing --nocapture`.
+#[tokio::test]
+#[ignore = "network"]
+async fn live_timing() {
+    use std::time::Instant;
+    let sources = super::client::Sources::public();
+    let usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+    let t = Instant::now();
+    let _ = super::client::run(&sources, super::tools::ChainTool::Status, json!({})).await;
+    eprintln!("chain_status: {:?}", t.elapsed());
+    let t = Instant::now();
+    let r = super::client::run(
+        &sources,
+        super::tools::ChainTool::Token,
+        json!({ "address": usdg, "market": false }),
+    )
+    .await;
+    eprintln!("chain_token: {:?} ok={}", t.elapsed(), r.is_ok());
+    let t = Instant::now();
+    let r = run(
+        &sources,
+        ResearchTool::TokenProfile,
+        json!({ "token": usdg }),
+    )
+    .await;
+    eprintln!("token_profile: {:?} ok={}", t.elapsed(), r.is_ok());
+    let t = Instant::now();
+    let r = run(
+        &sources,
+        ResearchTool::TokenReport,
+        json!({ "token": usdg }),
+    )
+    .await;
+    eprintln!(
+        "token_report (warm cache): {:?} ok={}",
+        t.elapsed(),
+        r.is_ok()
     );
 }
